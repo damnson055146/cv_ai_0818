@@ -48,9 +48,24 @@ const [state, send] = useMachine(
 
 const api = computed(() => splitter.connect(state.value, send, normalizeProps));
 
-// Fetch resume data
+// Fetch resume data (client-only to avoid SSR errors)
 const route = useRoute();
-(async () => await switchResume(route.params.id as string))();
+onMounted(async () => {
+  const id = route.params.id as string;
+  const ok = await switchResume(id);
+  if (!ok) {
+    const { DEFAULT_STYLES, DEFAULT_NAME, DEFAULT_MD_CONTENT, DEFAULT_CSS_CONTENT } = await import("~/utils");
+    const { saveResume } = await import("~/utils/database");
+    await saveResume(id, {
+      name: DEFAULT_NAME,
+      markdown: DEFAULT_MD_CONTENT,
+      css: DEFAULT_CSS_CONTENT,
+      styles: DEFAULT_STYLES,
+      update: id
+    } as any);
+    await switchResume(id);
+  }
+});
 
 // Toogle toolbar
 const { width } = useWindowSize();

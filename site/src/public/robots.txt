@@ -1,4 +1,3 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://www.junian.dev/markdown-resume/sitemap.xml

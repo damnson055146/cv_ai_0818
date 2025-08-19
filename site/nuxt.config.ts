@@ -1,5 +1,27 @@
 import { pwa } from "./configs/pwa";
 import { i18n } from "./configs/i18n";
+import dotenv from "dotenv";
+import fs from "node:fs";
+import path from "node:path";
+dotenv.config({ path: "./configs/.env" });
+// Fallback manual load if dotenv missed
+try {
+  const envPath = path.resolve(process.cwd(), "./configs/.env");
+  if (fs.existsSync(envPath)) {
+    const raw = fs.readFileSync(envPath, "utf-8");
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line || line.trim().startsWith("#") || !line.includes("=")) continue;
+      const idx = line.indexOf("=");
+      const key = line.slice(0, idx).trim();
+      let val = line.slice(idx + 1).trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      if (!(key in process.env)) process.env[key] = val;
+    }
+  }
+} catch {}
+const SITE_URL = process.env.NUXT_PUBLIC_SITE_URL || process.env.SITE_URL || "http://localhost:3000";
 
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
@@ -31,8 +53,59 @@ export default defineNuxtConfig({
   i18n,
 
   runtimeConfig: {
+    openaiApiKey: process.env.OPENAI_API_KEY || "",
     public: {
-      googleFontsKey: ""
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
+      googleFontsKey: "",
+      chatbot: {
+        provider: "openai", // control in config file
+        model: "o3", // default model id
+        // For OpenAI compatible APIs, use full endpoint path for chat completions
+        // e.g. 'https://api.openai.com/v1/chat/completions'
+        // or 3rd party compatible base.
+        apiBase: "api/ai",
+        gpt5Extras: false, // include gpt-5 extras (verbosity/reasoning_effort) by default
+        responseFormat: {
+          enabled: false,
+          schema: {
+            type: "object",
+            properties: {
+              steps: { type: "array", items: { type: "string" } },
+              final_answer: { type: "string" }
+            },
+            required: ["steps", "final_answer"],
+            additionalProperties: false
+          }
+        },
+        models: [
+          {
+            id: "gpt-5",
+            label: "GPT‑5",
+            apiBase: "https://api.openai.com/v1/chat/completions",
+            apiModel: "gpt-5",
+            general: {
+              temperature: { min: 0, max: 2, step: 0.1, default: 1 },
+              max_tokens: { min: 16, max: 32768, step: 16, default: 2048 }
+            },
+            specific: {
+              verbosity: { type: "enum", options: ["low", "medium", "high"], default: "medium" },
+              reasoning_effort: { type: "enum", options: ["minimal", "default", "deep"], default: "default" }
+            }
+          },
+          {
+            id: "o3",
+            label: "o3",
+            apiBase: "https://api.openai.com/v1/responses",
+            apiModel: "o3-2025-04-16",
+            general: {
+              temperature: { min: 0, max: 2, step: 0.1, default: 1 },
+              max_tokens: { min: 16, max: 32768, step: 16, default: 2048 }
+            },
+            specific: {}
+          },
+          
+        ]
+      }
     }
   },
 
@@ -56,17 +129,17 @@ export default defineNuxtConfig({
       ],
       meta: [
         { name: "viewport", content: "width=device-width, initial-scale=1" },
-        { name: "application-name", content: "Markdown Resume" },
-        { name: "apple-mobile-web-app-title", content: "Markdown Resume" },
+        { name: "application-name", content: "md_ai_cv" },
+        { name: "apple-mobile-web-app-title", content: "md_ai_cv" },
         { name: "msapplication-TileColor", content: "#fff" },
-        { property: "og:url", content: "https://www.junian.dev/markdown-resume/" },
         { property: "og:type", content: "website" }
       ]
     }
   },
 
   site: {
-    url: "https://www.junian.dev/markdown-resume/"
+    // Must be absolute for nuxt-site-config / sitemap
+    url: SITE_URL
   },
 
   pwa,

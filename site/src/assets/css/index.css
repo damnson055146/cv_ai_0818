@@ -4,6 +4,12 @@
 body {
   @apply bg-dark-c;
 }
+.bg-chat-assistant {
+  @apply bg-gray-100 dark:bg-slate-600;
+}
+.bg-chat-user {
+  @apply bg-emerald-600 text-white;
+}
 
 .header {
   @apply h-12;  /* 48px */

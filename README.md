@@ -2,13 +2,12 @@
 
 <p align="center">Write an ATS-friendly Resume in Markdown. Available for anyone, Optimized for Dev.</p>
 
-<p align="center"><a href="https://www.junian.dev/markdown-resume/"><strong>Start Writing Now</strong></a>!</p>
+<p align="center"><a href="/"><strong>Start Writing Now</strong></a>!</p>
 
 <img align="center" src="https://raw.githubusercontent.com/junian/markdown-resume/assets/img/markdown-resume-screenshot-00.jpg"/>
 
 ## About
-
-A fork of "Oh My CV!". You can visit the original work [here](https://ohmycv.app/).
+A work from Junian, with LLM integrated.
 
 Changes I made from the original work:
 - Default template is now as close as possible with [CareerCup's](https://www.careercup.com/resume) resume template.
@@ -81,4 +80,6 @@ This project is licensed under [MIT](LICENSE) license.
 
 ---
 
-Made with ☕ by [Junian.dev](https://www.junian.dev).
+Made with ☕ by Junian.
+Appreciate the effort from Junian --Pan
+

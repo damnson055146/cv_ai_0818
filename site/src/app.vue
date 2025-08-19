@@ -3,6 +3,9 @@
     <VitePwaManifest />
     <NuxtPage />
     <ToastList />
+    <ClientOnly>
+      <Chatbot />
+    </ClientOnly>
   </div>
 </template>
 
@@ -12,11 +15,11 @@ const colorMode = useColorMode();
 const preferredDark = { value: false }; //usePreferredDark();
 
 useHead({
-  title: t("head.title"),
+  title: 'md_ai_cv',
   meta: [
     { name: "keywords", content: t("head.keywords") },
     { name: "description", content: t("head.desc") },
-    { property: "og:title", content: t("head.title") },
+    { property: "og:title", content: 'md_ai_cv' },
     { property: "og:description", content: t("head.desc") },
     { property: "og:locale", content: locale },
     {
