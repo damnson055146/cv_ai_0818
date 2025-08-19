@@ -20,6 +20,16 @@
       </div>
       <textarea v-model="prompt" class="border border-c/60 rounded px-2 py-1 bg-transparent w-80 h-22 leading-5" placeholder="Custom prompt"></textarea>
     </div>
+
+    <!-- Preview bubble -->
+    <div v-if="showPreview" class="preview-bubble absolute left-2 top-full mt-2 bg-c border border-c/60 rounded-lg shadow-lg p-2 w-96 max-w-[80vw]">
+      <div class="font-medium mb-1">Preview</div>
+      <div class="border border-c/60 rounded p-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs">{{ previewText }}</div>
+      <div class="mt-2 hstack space-x-2">
+        <button class="round-btn" @click="applyPreview">Apply</button>
+        <button class="round-btn" @click="cancelPreview">Cancel</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -35,10 +45,9 @@ type Preset = { name: string; prompt: string };
 const presets = ref<Preset[]>([]);
 const selectedPreset = ref('');
 const newPresetName = ref('');
-const prompt = ref('Rewrite the selected text to be concise and professional. Keep all markdown and custom tags unchanged.');
-const runtime = useRuntimeConfig();
-const apiKeyFromEnv = (runtime.public as any)?.OPENAI_API_KEY || (runtime as any)?.openaiApiKey || '';
-const apiKey = ref(apiKeyFromEnv || localStorage.getItem('OPENAI_API_KEY') || '');
+const prompt = ref('Rewrite the selected text to be concise and professional. Keep all markdown and custom tags unchanged. Return only the rewritten text. Do not include addional tags or any explanations.');
+const showPreview = ref(false);
+const previewText = ref('');
 
 let hideTimer: number | null = null;
 
@@ -80,40 +89,52 @@ const run = async () => {
   if (!input) return;
 
   try {
-    if (!apiKey.value) {
-      alert('Please set OPENAI_API_KEY in site/configs/.env or localStorage.');
-      return;
-    }
-    localStorage.setItem('OPENAI_API_KEY', apiKey.value);
-
     // Preserve formatting via instruction & examples
     const examples = `Examples of formatting to preserve:\n- Bold: **text**\n- Italic: *text*\n- Code: \`code\`\n- Links: [text](url)\n- Images: ![alt](url)\n- Crossref: [~P1] and [~P1]: Definition\n- Headings: #, ##, ### prefixes\n- Lists: -, 1., >, : prefixes\nIf the selection contains formatting markers, keep the structure and only rewrite natural language text.`;
 
     const combined = `${prompt.value}\n\n${examples}\n\n<selection>\n${input}\n</selection>`;
 
     const body = {
-      model: 'openai/o3-2025-04-16',
-      input: [ { role: 'user', content: combined } ],
+      model: 'o3',
+      input: combined,
       reasoning: { effort: 'high' },
-      max_completion_tokens: 512,
-      tool_calling: 'auto',
-      parallel_tool_calls: true
-    } as any;
+      max_output_tokens: 512
+    };
 
-    const res = await fetch('/api/ai', {
+    const base = (window as any).__NUXT__?.config?.app?.baseURL || '/';
+    const apiURL = (base.endsWith('/') ? base : base + '/') + 'api/ai';
+    let res = await fetch(apiURL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         // no direct key on client
       },
-      body: JSON.stringify({ endpoint: 'responses', body })
+      body: JSON.stringify(body)
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      throw new Error(await res.text());
+    }
     const data = await res.json();
-    // Extract text
-    const output = (data.output_text || data.output?.[0]?.content || data.output?.[0]?.content?.[0]?.text || '');
-    if (output) props.applyText(output);
-    visible.value = false;
+    // Extract text robustly for Responses API
+    const pickOutputText = (d: any): string => {
+      if (typeof d?.output_text === 'string') return d.output_text;
+      if (typeof d?.text === 'string') return d.text;
+      const arr = Array.isArray(d?.output) ? d.output : [];
+      for (const item of arr) {
+        if (item?.type === 'message' && Array.isArray(item?.content)) {
+          const outTxt = item.content.find((c: any) => c?.type === 'output_text' && typeof c?.text === 'string');
+          if (outTxt) return outTxt.text as string;
+          const anyTxt = item.content.find((c: any) => typeof c?.text === 'string');
+          if (anyTxt) return anyTxt.text as string;
+        }
+      }
+      return '';
+    };
+    const output = pickOutputText(data);
+    if (output) {
+      previewText.value = output;
+      showPreview.value = true;
+    }
   } catch (e: any) {
     console.error(e);
     alert(`OpenAI error: ${e.message || e}`);
@@ -157,6 +178,19 @@ const paste = async () => {
   // Fallback: prompt-based paste if permission is blocked
   const text = window.prompt('Paste text here');
   if (text != null) props.applyText(text);
+};
+
+const applyPreview = () => {
+  if (!previewText.value) return;
+  props.applyText(previewText.value);
+  showPreview.value = false;
+  previewText.value = '';
+  visible.value = false;
+};
+
+const cancelPreview = () => {
+  showPreview.value = false;
+  previewText.value = '';
 };
 </script>
 

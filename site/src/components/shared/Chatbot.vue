@@ -146,6 +146,10 @@ interface Message {
   content: string;
 }
 
+// Preset system prompt
+const SYSTEM_PROMPT =
+  "你是一个资深留学顾问，擅长编辑留学申请用的简历、个人陈述/文书、推荐信，并能专业解答留学相关问题。默认用简体中文回答，如果文本处理需求则按照用户要求来选择语言。你的回答风格专业、清晰、可执行，必要时先澄清关键信息。";
+
 const isOpen = ref(false);
 const draft = ref("");
 const messages = useLocalStorage<Message[]>(
@@ -187,11 +191,11 @@ const gpt5Spec = computed(() => (modelOptions.find((m) => m.id === "gpt-5")?.spe
 const effectiveApiBase = computed(() => globalApiBase || currentModel.value?.apiBase || "");
 // Backward compatibility: auto-upgrade old endpoint '/api/chat' to '/api/ai'
 const effectiveApiBaseNormalized = computed(() => {
-  const val = effectiveApiBase.value || "";
-  if (val.includes("/api/chat")) return val.replace("/api/chat", "api/ai");
-  // ensure relative path works under baseURL
-  if (val.startsWith("/api/ai")) return val.replace("/api/ai", "api/ai");
-  return val;
+  // Always call server proxy at absolute root '/api/ai'
+  let url = effectiveApiBase.value || "/api/ai";
+  if (url.includes("/api/chat")) url = url.replace("/api/chat", "/api/ai");
+  if (!url.startsWith("/api/")) url = "/api/ai";
+  return url;
 });
 
 const temperature = useLocalStorage<number>("chatbot.temperature", generalSpec.value.temperature.default);
@@ -336,6 +340,8 @@ function resetInputHeight() {
 async function simulateAssistant(userText: string) {
   isThinking.value = true;
   try {
+    // Ensure no legacy HTML blobs remain in history before building payload
+    purgeHtmlFromHistory();
     const endpoint = effectiveApiBaseNormalized.value;
     console.debug('[chatbot] endpoint=', endpoint, 'model=', selectedModel.value);
     if (endpoint) {
@@ -357,7 +363,7 @@ async function simulateAssistant(userText: string) {
           },
           body: { ...payload, model: selectedModel.value }
         });
-        const text = ensureText(normalizeResponsesOutput(res));
+        const text = sanitizeForDisplay(ensureText(normalizeResponsesOutput(res)));
         pushMessage({ role: "assistant", content: text });
       } else {
         // Chat completions
@@ -386,11 +392,11 @@ async function simulateAssistant(userText: string) {
           };
         }
         const res: any = await requestChatCompletions(endpoint, payload);
-        const text = ensureText(
+        const text = sanitizeForDisplay(ensureText(
           res?.choices?.[0]?.message?.content ??
           res?.reply ??
           (typeof res === "string" ? res : JSON.stringify(res))
-        );
+        ));
         pushMessage({ role: "assistant", content: text });
       }
     } else {
@@ -431,10 +437,10 @@ async function streamChat(endpoint: string, payload: any) {
       try {
         const data = await clone.json();
         const msg = data?.error?.detail || data?.error || data;
-        pushMessage({ role: 'assistant', content: ensureText(msg) });
+        pushMessage({ role: 'assistant', content: sanitizeForDisplay(ensureText(msg)) });
       } catch (_) {
         const text = await clone.text();
-        pushMessage({ role: 'assistant', content: ensureText(text) });
+        pushMessage({ role: 'assistant', content: sanitizeForDisplay(ensureText(text)) });
       }
       return;
     }
@@ -560,13 +566,29 @@ function ensureText(value: any): string {
   }
 }
 
+// Detect and sanitize unexpected HTML payloads
+function isHtmlLike(text: string): boolean {
+  return /<\s*(?:!doctype|html|head|body)\b/i.test(text);
+}
+
+function sanitizeForDisplay(text: string): string {
+  if (isHtmlLike(text)) return "[Error] Unexpected HTML response discarded.";
+  return text;
+}
+
+function purgeHtmlFromHistory() {
+  const before = messages.value.length;
+  messages.value = messages.value.filter((m) => !isHtmlLike(ensureText(m.content)));
+}
+
 // Utilities to build context
 function buildChatMessages() {
   const base: Array<{ role: string; content: string }> = [
-    { role: "system", content: "You are a helpful assistant." }
+    { role: "system", content: SYSTEM_PROMPT }
   ];
   const history = messages.value
-    .map((m) => ({ role: m.role, content: ensureText(m.content) }))
+    .map((m) => ({ role: m.role, content: sanitizeForDisplay(ensureText(m.content)) }))
+    .filter((m) => !isHtmlLike(m.content))
     .slice(-40); // keep last N turns to limit token usage
   return base.concat(history);
 }
@@ -574,6 +596,7 @@ function buildChatMessages() {
 function buildInputFromMessages(msgs: Array<{ role: string; content: string }>) {
   // For responses API, simple concatenation with role tags
   return msgs
+    .filter((m) => !isHtmlLike(m.content))
     .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
     .join("\n\n");
 }

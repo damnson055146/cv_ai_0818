@@ -2,7 +2,7 @@ import { defineEventHandler, readBody, setHeader, setResponseStatus, sendStream 
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event) as any;
-  const body = await readBody<any>(event);
+  const reqBody = await readBody<any>(event);
 
   const apiKey: string = config.openaiApiKey || config.public?.OPENAI_API_KEY || "";
   if (!apiKey) {
@@ -10,13 +10,19 @@ export default defineEventHandler(async (event) => {
     return { error: 'OPENAI_API_KEY is missing in runtime config' };
   }
 
+  // Support both wrapped payload { endpoint, body } and direct OpenAI body
+  const endpointHint: string | undefined = typeof reqBody?.endpoint === 'string' ? reqBody.endpoint : undefined;
+  const body: any = reqBody?.body ?? reqBody;
+
   const fallbackModel = (config.public as any)?.chatbot?.model || 'o3';
-  const model: string = typeof body?.model === 'string' && body.model.trim().length > 0
-    ? body.model
+  const model: string = typeof body?.model === 'string' && String(body.model).trim().length > 0
+    ? String(body.model)
     : fallbackModel;
 
-  // Decide endpoint strictly by model id prefix
-  const useResponsesApi = /^(o3)/i.test(model);
+  // Decide endpoint: prefer explicit endpoint, else infer from model id
+  const useResponsesApi = endpointHint
+    ? endpointHint === 'responses'
+    : /(^o3|\/o3-)/i.test(model);
 
   // Normalize payload per target API and model quirks
   const payload: any = { ...body, model };
@@ -124,5 +130,3 @@ export default defineEventHandler(async (event) => {
   // @ts-ignore Nitro helper
   return sendStream(event, stream);
 });
-
-

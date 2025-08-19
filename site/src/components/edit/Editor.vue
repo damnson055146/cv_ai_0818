@@ -18,7 +18,7 @@
       </button>
     </div>
 
-    <div class="flex h-full">
+    <div class="flex h-full min-h-0">
       <MdSidebar
         class="flex-none border-r border-c bg-c/50"
         :state="sidebarState"
@@ -43,7 +43,7 @@
       <ClientOnly>
         <AiToolbar :getSelection="getCurrentSelectionText" :getSelectionRect="getCurrentSelectionRect" :applyText="replaceSelectionText" />
       </ClientOnly>
-      <div ref="editorRef" class="flex-1" h-full />
+      <div ref="editorRef" class="flex-1 min-w-0 min-h-0 overflow-auto" h-full />
     </div>
   </div>
   
@@ -86,36 +86,40 @@ onMounted(async () => {
     ed.onDidChangeModelContent(() => refreshSidebarState());
     refreshSidebarState();
 
-    // Let Monaco handle Ctrl+V natively for maximum compatibility
-    // Ensure editor has focus on Ctrl+V when not typing in inputs
-    const keydownHandler = async (e: KeyboardEvent) => {
+    // Ensure paste works even if some global handlers block default behavior
+    const pasteHandler = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = (target?.tagName || '').toLowerCase();
+      const isInputLike = tag === 'input' || tag === 'textarea' || tag === 'select' || (target && target.isContentEditable);
+      if (isInputLike) return;
+      const text = e.clipboardData?.getData('text/plain') || '';
+      if (!text) return;
+      e.preventDefault();
+      replaceSelectionText(text);
+    };
+    window.addEventListener('paste', pasteHandler, true);
+    (ed as any)._mdr_pasteHandler = pasteHandler;
+
+    // If user presses Ctrl+V while focus is not in an input, focus editor early
+    const keydownFocusForPaste = (e: KeyboardEvent) => {
       const isCtrlV = (e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V');
       if (!isCtrlV) return;
       const target = e.target as HTMLElement | null;
       const tag = (target?.tagName || '').toLowerCase();
       const isInputLike = tag === 'input' || tag === 'textarea' || tag === 'select' || (target && target.isContentEditable);
       if (isInputLike) return;
-      // Try to paste manually using Clipboard API under the user gesture
-      e.preventDefault();
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) {
-          replaceSelectionText(text);
-          return;
-        }
-      } catch {}
-      // Fallback: focus editor and let native paste proceed (if any)
       ed.focus();
     };
-    window.addEventListener('keydown', keydownHandler, true);
-    (ed as any)._mdr_keydownHandler = keydownHandler;
+    window.addEventListener('keydown', keydownFocusForPaste, true);
+    (ed as any)._mdr_keydownFocusForPaste = keydownFocusForPaste;
   }
 });
 
 onBeforeUnmount(() => {
   if (editor) {
     const ed = editor.editor as any;
-    if (ed._mdr_keydownHandler) window.removeEventListener('keydown', ed._mdr_keydownHandler, true);
+    if (ed._mdr_pasteHandler) window.removeEventListener('paste', ed._mdr_pasteHandler, true);
+    if (ed._mdr_keydownFocusForPaste) window.removeEventListener('keydown', ed._mdr_keydownFocusForPaste, true);
   }
   editor?.dispose();
 });

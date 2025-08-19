@@ -1,26 +1,10 @@
 import { pwa } from "./configs/pwa";
 import { i18n } from "./configs/i18n";
 import dotenv from "dotenv";
-import fs from "node:fs";
-import path from "node:path";
+// Prefer standard .env mechanism (works in dev and on many hosts)
+dotenv.config();
+// Also try site/configs/.env during dev/start
 dotenv.config({ path: "./configs/.env" });
-// Fallback manual load if dotenv missed
-try {
-  const envPath = path.resolve(process.cwd(), "./configs/.env");
-  if (fs.existsSync(envPath)) {
-    const raw = fs.readFileSync(envPath, "utf-8");
-    for (const line of raw.split(/\r?\n/)) {
-      if (!line || line.trim().startsWith("#") || !line.includes("=")) continue;
-      const idx = line.indexOf("=");
-      const key = line.slice(0, idx).trim();
-      let val = line.slice(idx + 1).trim();
-      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.slice(1, -1);
-      }
-      if (!(key in process.env)) process.env[key] = val;
-    }
-  }
-} catch {}
 const SITE_URL = process.env.NUXT_PUBLIC_SITE_URL || process.env.SITE_URL || "http://localhost:3000";
 
 // https://nuxt.com/docs/api/configuration/nuxt-config
@@ -55,7 +39,6 @@ export default defineNuxtConfig({
   runtimeConfig: {
     openaiApiKey: process.env.OPENAI_API_KEY || "",
     public: {
-      OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
       googleFontsKey: "",
       chatbot: {
         provider: "openai", // control in config file
@@ -63,7 +46,7 @@ export default defineNuxtConfig({
         // For OpenAI compatible APIs, use full endpoint path for chat completions
         // e.g. 'https://api.openai.com/v1/chat/completions'
         // or 3rd party compatible base.
-        apiBase: "api/ai",
+        apiBase: "/api/ai", // absolute path to avoid baseURL-prefixed HTML
         gpt5Extras: false, // include gpt-5 extras (verbosity/reasoning_effort) by default
         responseFormat: {
           enabled: false,
@@ -119,7 +102,7 @@ export default defineNuxtConfig({
     //    baseURL: '/'
     // Else if host it on https://example.com/resume
     //    baseURL: '/resume/'
-    baseURL: '/markdown-resume/', // baseURL: '/<repository>/'
+    baseURL: process.env.NUXT_APP_BASE_URL || '/markdown-resume/', // override with NUXT_APP_BASE_URL='/' in dev
     buildAssetsDir: 'assets', // don't use "_" at the begining of the folder name to avoids
     head: {
       viewport: "width=device-width,initial-scale=1",
