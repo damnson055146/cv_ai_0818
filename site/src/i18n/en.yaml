@@ -21,6 +21,11 @@ resumes:
   created: "Created: "
   updated: "Updated: "
   new: New
+  choose_template: Choose a template
+  choose_doc_type: Choose document type
+  choose_lang: Choose language
+  ps: Personal Statement
+  rec: Recommendation Letter
   save: Save
   saveas: Save as...
   import: Import from...

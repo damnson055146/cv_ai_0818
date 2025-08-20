@@ -21,6 +21,7 @@ resumes:
   created: "Creado: "
   updated: "Actualizado: "
   new: Nuevo
+  choose_template: Elegir una plantilla
   save: Guardar
   saveas: Guardar como...
   import: Importar desde...

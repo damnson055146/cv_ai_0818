@@ -43,6 +43,9 @@
         @add-research-entry="() => insertTemplate('research-entry')"
         @add-project-title="() => insertTemplate('project-title')"
         @add-project-entry="() => insertTemplate('project-entry')"
+        @add-publication-title="() => insertTemplate('pub-title')"
+        @add-publication-entry="() => insertTemplate('pub-entry')"
+        @add-skills="() => insertTemplate('skills')"
       />
       <ClientOnly>
         <AiToolbar :getSelection="getCurrentSelectionText" :getSelectionRect="getCurrentSelectionRect" :applyText="replaceSelectionText" />
@@ -774,7 +777,7 @@ const toggleSpan = () => {
   ed.setSelection(newSel);
 };
 
-const insertTemplate = (type: 'internship-title' | 'internship-entry' | 'campus-title' | 'campus-entry' | 'research-title' | 'research-entry' | 'project-title' | 'project-entry') => {
+const insertTemplate = (type: 'internship-title' | 'internship-entry' | 'campus-title' | 'campus-entry' | 'research-title' | 'research-entry' | 'project-title' | 'project-entry' | 'pub-title' | 'pub-entry' | 'skills') => {
   if (!editor) return;
   const ed = editor.editor;
   const model = ed.getModel();
@@ -789,7 +792,11 @@ const insertTemplate = (type: 'internship-title' | 'internship-entry' | 'campus-
     'research-title': `## Research Experience\n\n**<Research Title>**\n****\n\n**<Position / Role>**\n  : **<Date / Range>**\n\n- <Contribution 1>\n- <Contribution 2>\n- <Contribution 3>\n\n`,
     'research-entry': `**<Research Title>**\n****\n\n**<Position / Role>**\n  : **<Date / Range>**\n\n- <Contribution 1>\n- <Contribution 2>\n- <Contribution 3>\n\n`,
     'project-title': `## Project Experience\n\n**<Project Name>**\n  : **<Tech Stack / Role>**\n  : **<Date Range>**\n\n- <Highlight 1>\n- <Highlight 2>\n- <Highlight 3>\n\n`,
-    'project-entry': `**<Project Name>**\n  : **<Tech Stack / Role>**\n  : **<Date Range>**\n\n- <Highlight 1>\n- <Highlight 2>\n- <Highlight 3>\n\n`
+    'project-entry': `**<Project Name>**\n  : **<Tech Stack / Role>**\n  : **<Date Range>**\n\n- <Highlight 1>\n- <Highlight 2>\n- <Highlight 3>\n\n`,
+    'pub-title': `## Publications\n\n[~P1]: **<Paper Title>**\n\n    <u><First Author></u>, <Coauthor A>, <Coauthor B>\n\n    *<Venue, Year>*\n\n`,
+    'pub-entry': `[~P1]: **<Paper Title>**\n\n    <u><First Author></u>, <Coauthor A>, <Coauthor B>\n\n    *<Venue, Year>*\n\n`
+    ,
+    'skills': `## Skills\n\n**Programming Languages:** <span class="iconify" data-icon="vscode-icons:file-type-python"></span> Python, <span class="iconify" data-icon="vscode-icons:file-type-js-official"></span> JavaScript / <span class="iconify" data-icon="vscode-icons:file-type-typescript-official"></span> TypeScript, <span class="iconify" data-icon="vscode-icons:file-type-html"></span> HTML / <span class="iconify" data-icon="vscode-icons:file-type-css"></span> CSS, <span class="iconify" data-icon="logos:java" data-inline="false"></span> Java\n\n**Tools and Frameworks:** Git, PyTorch, Keras, scikit-learn, Linux, Vue, React, Django, $\\LaTeX$\n\n**Languages:** English (proficient), Indonesia (native)\n\n`
   };
   const text = templates[type];
   ed.executeEdits('insert-template', [

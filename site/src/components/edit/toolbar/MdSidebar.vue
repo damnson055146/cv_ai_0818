@@ -1,6 +1,9 @@
 <template>
   <div ref="root" class="relative flex flex-col items-center p-2 space-y-2 w-10 select-none">
-    <button class="round-btn" title="Collapse/Expand Base" @click="baseCollapsed = !baseCollapsed">{{ baseCollapsed ? '⮟' : '⮝' }}</button>
+    <button class="round-btn" title="Styles" type="button" :aria-expanded="(!baseCollapsed).toString()" @click="baseCollapsed = !baseCollapsed">
+      <span class="i-material-symbols:format-paint-outline-rounded text-sm"></span>
+      <span :class="baseCollapsed ? 'i-ic:round-keyboard-arrow-down' : 'i-ic:round-keyboard-arrow-up'" class="ml-0.5 text-xs"></span>
+    </button>
 
     <!-- Base styles -->
     <div v-show="!baseCollapsed" class="flex flex-col items-center space-y-2 w-full">
@@ -23,35 +26,70 @@
     </div>
 
     <!-- Advanced styles -->
-    <button class="round-btn" title="Collapse/Expand Advanced" @click="advCollapsed = !advCollapsed">{{ advCollapsed ? '⮟' : '⮝' }}</button>
+    <button class="round-btn" title="Structures" type="button" :aria-expanded="(!advCollapsed).toString()" @click="advCollapsed = !advCollapsed">
+      <span class="i-material-symbols:account-tree-outline text-sm"></span>
+      <span :class="advCollapsed ? 'i-ic:round-keyboard-arrow-down' : 'i-ic:round-keyboard-arrow-up'" class="ml-0.5 text-xs"></span>
+    </button>
     <div v-show="!advCollapsed" class="flex flex-col items-center space-y-2 w-full">
       <div class="flex flex-col items-center space-y-1 w-full">
         <button class="round-btn text-xs" title="Internship" @click="toggleInternMenu($event)">Internship ▾</button>
-        <div v-show="internMenuOpen" ref="internMenu" class="submenu absolute z-20 left-12 mt-1 w-34 bg-c border border-c rounded-md shadow p-1">
-          <button class="round-btn w-full text-xs mb-1" title="Add section" @click="$emit('add-internship-title'); closeInternMenu()">+ Section</button>
-          <button class="round-btn w-full text-xs" title="Add entry" @click="$emit('add-internship-entry'); closeInternMenu()">+ Entry</button>
+        <div v-show="internMenuOpen" ref="internMenu" class="submenu absolute z-20 left-12 mt-1 w-40 bg-c border border-c rounded-md shadow p-1">
+          <button class="w-full text-xs px-2 py-1 rounded text-left border-0 bg-transparent hover:bg-gray-100 dark:hover:bg-slate-700 mb-1" title="Add section" @click="$emit('add-internship-title'); closeInternMenu()">
+            <span class="i-material-symbols:add text-xs mr-1"></span> Section
+          </button>
+          <button class="w-full text-xs px-2 py-1 rounded text-left border-0 bg-transparent hover:bg-gray-100 dark:hover:bg-slate-700" title="Add entry" @click="$emit('add-internship-entry'); closeInternMenu()">
+            <span class="i-material-symbols:add text-xs mr-1"></span> Entry
+          </button>
         </div>
       </div>
       <div class="flex flex-col items-center space-y-1 w-full">
         <button class="round-btn text-xs" title="Campus Activity" @click="toggleCampusMenu($event)">Campus ▾</button>
-        <div v-show="campusMenuOpen" ref="campusMenu" class="submenu absolute z-20 left-12 mt-1 w-34 bg-c border border-c rounded-md shadow p-1">
-          <button class="round-btn w-full text-xs mb-1" title="Add section" @click="$emit('add-campus-title'); closeCampusMenu()">+ Section</button>
-          <button class="round-btn w-full text-xs" title="Add entry" @click="$emit('add-campus-entry'); closeCampusMenu()">+ Entry</button>
+        <div v-show="campusMenuOpen" ref="campusMenu" class="submenu absolute z-20 left-12 mt-1 w-40 bg-c border border-c rounded-md shadow p-1">
+          <button class="w-full text-xs px-2 py-1 rounded text-left border-0 bg-transparent hover:bg-gray-100 dark:hover:bg-slate-700 mb-1" title="Add section" @click="$emit('add-campus-title'); closeCampusMenu()">
+            <span class="i-material-symbols:add text-xs mr-1"></span> Section
+          </button>
+          <button class="w-full text-xs px-2 py-1 rounded text-left border-0 bg-transparent hover:bg-gray-100 dark:hover:bg-slate-700" title="Add entry" @click="$emit('add-campus-entry'); closeCampusMenu()">
+            <span class="i-material-symbols:add text-xs mr-1"></span> Entry
+          </button>
         </div>
       </div>
       <div class="flex flex-col items-center space-y-1 w-full">
         <button class="round-btn text-xs" title="Research" @click="toggleResearchMenu($event)">Research ▾</button>
-        <div v-show="researchMenuOpen" ref="researchMenu" class="submenu absolute z-20 left-12 mt-1 w-34 bg-c border border-c rounded-md shadow p-1">
-          <button class="round-btn w-full text-xs mb-1" title="Add section" @click="$emit('add-research-title'); closeResearchMenu()">+ Section</button>
-          <button class="round-btn w-full text-xs" title="Add entry" @click="$emit('add-research-entry'); closeResearchMenu()">+ Entry</button>
+        <div v-show="researchMenuOpen" ref="researchMenu" class="submenu absolute z-20 left-12 mt-1 w-40 bg-c border border-c rounded-md shadow p-1">
+          <button class="w-full text-xs px-2 py-1 rounded text-left border-0 bg-transparent hover:bg-gray-100 dark:hover:bg-slate-700 mb-1" title="Add section" @click="$emit('add-research-title'); closeResearchMenu()">
+            <span class="i-material-symbols:add text-xs mr-1"></span> Section
+          </button>
+          <button class="w-full text-xs px-2 py-1 rounded text-left border-0 bg-transparent hover:bg-gray-100 dark:hover:bg-slate-700" title="Add entry" @click="$emit('add-research-entry'); closeResearchMenu()">
+            <span class="i-material-symbols:add text-xs mr-1"></span> Entry
+          </button>
         </div>
       </div>
       <div class="flex flex-col items-center space-y-1 w-full">
         <button class="round-btn text-xs" title="Project" @click="toggleProjectMenu($event)">Project ▾</button>
-        <div v-show="projectMenuOpen" ref="projectMenu" class="submenu absolute z-20 left-12 mt-1 w-34 bg-c border border-c rounded-md shadow p-1">
-          <button class="round-btn w-full text-xs mb-1" title="Add section" @click="$emit('add-project-title'); closeProjectMenu()">+ Section</button>
-          <button class="round-btn w-full text-xs" title="Add entry" @click="$emit('add-project-entry'); closeProjectMenu()">+ Entry</button>
+        <div v-show="projectMenuOpen" ref="projectMenu" class="submenu absolute z-20 left-12 mt-1 w-40 bg-c border border-c rounded-md shadow p-1">
+          <button class="w-full text-xs px-2 py-1 rounded text-left border-0 bg-transparent hover:bg-gray-100 dark:hover:bg-slate-700 mb-1" title="Add section" @click="$emit('add-project-title'); closeProjectMenu()">
+            <span class="i-material-symbols:add text-xs mr-1"></span> Section
+          </button>
+          <button class="w-full text-xs px-2 py-1 rounded text-left border-0 bg-transparent hover:bg-gray-100 dark:hover:bg-slate-700" title="Add entry" @click="$emit('add-project-entry'); closeProjectMenu()">
+            <span class="i-material-symbols:add text-xs mr-1"></span> Entry
+          </button>
         </div>
+      </div>
+
+      <div class="flex flex-col items-center space-y-1 w-full">
+        <button class="round-btn text-xs" title="Publications" @click="togglePublicationMenu($event)">Publications ▾</button>
+        <div v-show="publicationMenuOpen" ref="publicationMenu" class="submenu absolute z-20 left-12 mt-1 w-40 bg-c border border-c rounded-md shadow p-1">
+          <button class="w-full text-xs px-2 py-1 rounded text-left border-0 bg-transparent hover:bg-gray-100 dark:hover:bg-slate-700 mb-1" title="Add section" @click="$emit('add-publication-title'); closePublicationMenu()">
+            <span class="i-material-symbols:add text-xs mr-1"></span> Section
+          </button>
+          <button class="w-full text-xs px-2 py-1 rounded text-left border-0 bg-transparent hover:bg-gray-100 dark:hover:bg-slate-700" title="Add entry" @click="$emit('add-publication-entry'); closePublicationMenu()">
+            <span class="i-material-symbols:add text-xs mr-1"></span> Entry
+          </button>
+        </div>
+      </div>
+
+      <div class="flex flex-col items-center space-y-1 w-full">
+        <button class="round-btn text-xs" title="Insert Skills Section" @click="$emit('add-skills')">Skills</button>
       </div>
     </div>
   </div>
@@ -65,11 +103,13 @@ const internMenuOpen = ref(false);
 const campusMenuOpen = ref(false);
 const researchMenuOpen = ref(false);
 const projectMenuOpen = ref(false);
+const publicationMenuOpen = ref(false);
 const root = ref<HTMLElement | null>(null);
 const internMenu = ref<HTMLElement | null>(null);
 const campusMenu = ref<HTMLElement | null>(null);
 const researchMenu = ref<HTMLElement | null>(null);
 const projectMenu = ref<HTMLElement | null>(null);
+const publicationMenu = ref<HTMLElement | null>(null);
 
 const toggleInternMenu = (_e: MouseEvent) => {
   internMenuOpen.value = !internMenuOpen.value;
@@ -103,6 +143,14 @@ const closeProjectMenu = () => {
   projectMenuOpen.value = false;
 };
 
+const togglePublicationMenu = (_e: MouseEvent) => {
+  publicationMenuOpen.value = !publicationMenuOpen.value;
+};
+
+const closePublicationMenu = () => {
+  publicationMenuOpen.value = false;
+};
+
 const onDocClick = (e: MouseEvent) => {
   const t = e.target as Node;
   if (!root.value) return;
@@ -110,6 +158,7 @@ const onDocClick = (e: MouseEvent) => {
   if (!root.value.contains(t)) campusMenuOpen.value = false;
   if (!root.value.contains(t)) researchMenuOpen.value = false;
   if (!root.value.contains(t)) projectMenuOpen.value = false;
+  if (!root.value.contains(t)) publicationMenuOpen.value = false;
 };
 
 const onKeydown = (e: KeyboardEvent) => {
@@ -117,6 +166,7 @@ const onKeydown = (e: KeyboardEvent) => {
   if (e.key === 'Escape') campusMenuOpen.value = false;
   if (e.key === 'Escape') researchMenuOpen.value = false;
   if (e.key === 'Escape') projectMenuOpen.value = false;
+  if (e.key === 'Escape') publicationMenuOpen.value = false;
 };
 
 onMounted(() => {
@@ -186,6 +236,7 @@ const emit = defineEmits<{
   (e: "add-research-entry"): void;
   (e: "add-project-title"): void;
   (e: "add-project-entry"): void;
+  (e: "add-skills"): void;
 }>();
 </script>
 

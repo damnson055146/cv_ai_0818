@@ -21,6 +21,11 @@ resumes:
   created: 创建于：
   updated: 更新于：
   new: 新建
+  choose_template: 选择模板
+  choose_doc_type: 选择文档类型
+  choose_lang: 选择语言
+  ps: 文书（个人陈述）
+  rec: 推荐信
   save: 保存
   saveas: 另存为...
   import: 从...导入
