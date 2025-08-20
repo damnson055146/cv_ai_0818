@@ -24,21 +24,25 @@
         :state="sidebarState"
         @toggle-italic="() => toggleInlineWrap('*')"
         @toggle-bold="() => toggleInlineWrap('**')"
-        @toggle-strike="() => toggleInlineWrap('~~')"
-        @toggle-code="() => toggleInlineWrap('`')"
         @toggle-span="() => toggleSpan()"
         @toggle-h1="() => toggleLinePrefix('# ')"
         @toggle-h2="() => toggleLinePrefix('## ')"
         @toggle-h3="() => toggleLinePrefix('### ')"
         @toggle-list="() => toggleLinePrefix('- ')"
         @toggle-ol="() => toggleLinePrefix('1. ')"
-        @toggle-quote="() => toggleLinePrefix('> ')"
         @toggle-colon="() => toggleLinePrefix(': ')"
-        @toggle-codeblock="() => toggleCodeBlock()"
         @wrap-link="(url: string) => wrapLink(url)"
         @wrap-image="(url: string) => wrapImage(url)"
         @wrap-crossref="(name: string) => wrapWith(`[~${name}]`, '')"
         @insert-crossref-def="(name: string) => insertCrossrefDef(name)"
+        @add-internship-title="() => insertTemplate('internship-title')"
+        @add-internship-entry="() => insertTemplate('internship-entry')"
+        @add-campus-title="() => insertTemplate('campus-title')"
+        @add-campus-entry="() => insertTemplate('campus-entry')"
+        @add-research-title="() => insertTemplate('research-title')"
+        @add-research-entry="() => insertTemplate('research-entry')"
+        @add-project-title="() => insertTemplate('project-title')"
+        @add-project-entry="() => insertTemplate('project-entry')"
       />
       <ClientOnly>
         <AiToolbar :getSelection="getCurrentSelectionText" :getSelectionRect="getCurrentSelectionRect" :applyText="replaceSelectionText" />
@@ -173,15 +177,12 @@ const api = computed(() => tabs.connect(state.value, send, normalizeProps));
 const sidebarState = reactive({
   italic: false,
   bold: false,
-  strike: false,
-  code: false,
   span: false,
   h1: false,
   h2: false,
   h3: false,
   ul: false,
   ol: false,
-  quote: false,
   colon: false,
   link: false,
   image: false,
@@ -222,8 +223,7 @@ const refreshSidebarState = () => {
 
   sidebarState.italic = getWrapState('*');
   sidebarState.bold = getWrapState('**');
-  sidebarState.strike = getWrapState('~~');
-  sidebarState.code = getWrapState('`');
+  // removed strike/code from basic toolbar
   // span detection (strict selection or boundary at selection edges)
   try {
     const content = hasSelection ? model.getValueInRange(sel) : "";
@@ -322,38 +322,26 @@ const toggleInlineWrap = (marker: string) => {
       { range: leftRange, text: "", forceMoveMarkers: true }
     ]);
     // keep selecting inner text
-    const newSel = new (window as any).monaco.Selection(
-      selection.startLineNumber,
-      selection.startColumn,
-      selection.endLineNumber,
-      selection.endColumn
-    );
-    ed.setSelection(newSel);
+    ed.setSelection(selection);
   } else if (selectedText.startsWith(marker) && selectedText.endsWith(marker)) {
     // unwrap when markers are inside the selection
     ed.executeEdits("md-inline-unwrap-inside", [
       { range: selection, text: selectedText.slice(markerLen, selectedText.length - markerLen), forceMoveMarkers: true }
     ]);
-    const newSel = new (window as any).monaco.Selection(
-      selection.startLineNumber,
-      selection.startColumn,
-      selection.endLineNumber,
-      selection.endColumn - markerLen * 2
-    );
-    ed.setSelection(newSel);
+    ed.setSelection(selection);
   } else {
     // wrap
     ed.executeEdits("md-inline-wrap", [
       { range: selection, text: `${marker}${selectedText}${marker}`, forceMoveMarkers: true }
     ]);
-    // select inner text (exclude markers)
-    const newSel = new (window as any).monaco.Selection(
+    // reselect entire region including markers so next toggle can detect correctly
+    const sel = new (window as any).monaco.Selection(
       selection.startLineNumber,
-      selection.startColumn + markerLen,
+      selection.startColumn,
       selection.endLineNumber,
-      selection.endColumn + markerLen
+      selection.endColumn + markerLen * 2
     );
-    ed.setSelection(newSel);
+    ed.setSelection(sel);
   }
 };
 
@@ -445,13 +433,7 @@ const wrapWith = (before: string, after: string) => {
       { range: rightRange, text: "", forceMoveMarkers: true },
       { range: leftRange, text: "", forceMoveMarkers: true }
     ]);
-    const newSel = new (window as any).monaco.Selection(
-      selection.startLineNumber,
-      selection.startColumn,
-      selection.endLineNumber,
-      selection.endColumn
-    );
-    ed.setSelection(newSel);
+    ed.setSelection(selection);
   } else if (selectedText.startsWith(before) && (after === "" || selectedText.endsWith(after))) {
     // unwrap when markers are inside the selection
     const startOffset = before.length;
@@ -459,24 +441,18 @@ const wrapWith = (before: string, after: string) => {
     ed.executeEdits("md-wrap-unwrap-inside", [
       { range: selection, text: selectedText.slice(startOffset, endOffset ? selectedText.length - endOffset : undefined), forceMoveMarkers: true }
     ]);
-    const newSel = new (window as any).monaco.Selection(
-      selection.startLineNumber,
-      selection.startColumn,
-      selection.endLineNumber,
-      selection.endColumn - startOffset - (endOffset ? endOffset : 0)
-    );
-    ed.setSelection(newSel);
+    ed.setSelection(selection);
   } else {
     ed.executeEdits("md-wrap-wrap", [
       { range: selection, text: `${before}${selectedText}${after}` as string, forceMoveMarkers: true }
     ]);
-    const newSel = new (window as any).monaco.Selection(
+    const sel = new (window as any).monaco.Selection(
       selection.startLineNumber,
-      selection.startColumn + beforeLen,
+      selection.startColumn,
       selection.endLineNumber,
-      selection.endColumn + beforeLen
+      selection.endColumn + beforeLen + afterLen
     );
-    ed.setSelection(newSel);
+    ed.setSelection(sel);
   }
 };
 
@@ -513,9 +489,7 @@ const insertCrossrefDef = (name: string) => {
 // Keyboard shortcuts
 useShortcuts("ctrl+b", () => toggleInlineWrap("**"));
 useShortcuts("ctrl+i", () => toggleInlineWrap("*"));
-useShortcuts("ctrl+`", () => toggleInlineWrap("`"));
 useShortcuts("ctrl+shift+s", () => toggleSpan());
-useShortcuts("ctrl+shift+7", () => toggleInlineWrap("~~"));
 useShortcuts("ctrl+shift+\'", () => toggleLinePrefix("> "));
 useShortcuts("ctrl+shift+l", () => toggleLinePrefix("- "));
 useShortcuts("ctrl+shift+1", () => toggleLinePrefix("1. "));
@@ -798,5 +772,28 @@ const toggleSpan = () => {
     selection.endColumn + before.length
   );
   ed.setSelection(newSel);
+};
+
+const insertTemplate = (type: 'internship-title' | 'internship-entry' | 'campus-title' | 'campus-entry' | 'research-title' | 'research-entry' | 'project-title' | 'project-entry') => {
+  if (!editor) return;
+  const ed = editor.editor;
+  const model = ed.getModel();
+  if (!model) return;
+  const selection = ed.getSelection();
+  if (!selection) return;
+  const templates: Record<string, string> = {
+    'internship-title': `## Internship Experience\n\n**<Company>**\n  : ****\n  : **<Company Address>**\n\n**<Position>**\n  : ****\n  : **<Period>**\n\n- <Responsibility 1>\n- <Responsibility 2>\n- <Responsibility 3>\n\n`,
+    'internship-entry': `**<Company>**\n  : ****\n  : **<Company Address>**\n\n**<Position>**\n  : ****\n  : **<Period>**\n\n- <Responsibility 1>\n- <Responsibility 2>\n- <Responsibility 3>\n\n`,
+    'campus-title': `## Campus Activity\n\n**<University Name>**\n\n**<Department/Club/Organization>**\n  : ****\n  : **<Period>**\n\n- <Responsibility 1>\n- <Responsibility 2>\n- <Responsibility 3>\n\n`,
+    'campus-entry': `**<University Name>**\n\n**<Department/Club/Organization>**\n  : ****\n  : **<Period>**\n\n- <Responsibility 1>\n- <Responsibility 2>\n- <Responsibility 3>\n\n`,
+    'research-title': `## Research Experience\n\n**<Research Title>**\n****\n\n**<Position / Role>**\n  : **<Date / Range>**\n\n- <Contribution 1>\n- <Contribution 2>\n- <Contribution 3>\n\n`,
+    'research-entry': `**<Research Title>**\n****\n\n**<Position / Role>**\n  : **<Date / Range>**\n\n- <Contribution 1>\n- <Contribution 2>\n- <Contribution 3>\n\n`,
+    'project-title': `## Project Experience\n\n**<Project Name>**\n  : **<Tech Stack / Role>**\n  : **<Date Range>**\n\n- <Highlight 1>\n- <Highlight 2>\n- <Highlight 3>\n\n`,
+    'project-entry': `**<Project Name>**\n  : **<Tech Stack / Role>**\n  : **<Date Range>**\n\n- <Highlight 1>\n- <Highlight 2>\n- <Highlight 3>\n\n`
+  };
+  const text = templates[type];
+  ed.executeEdits('insert-template', [
+    { range: selection, text, forceMoveMarkers: true }
+  ]);
 };
 </script>
