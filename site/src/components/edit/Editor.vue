@@ -19,7 +19,8 @@
     </div>
 
     <div class="flex h-full min-h-0">
-      <MdSidebar
+      <component
+        :is="props.leftSidebarComponent || 'MdSidebar'"
         class="flex-none border-r border-c bg-c/50"
         :state="sidebarState"
         @toggle-italic="() => toggleInlineWrap('*')"
@@ -65,6 +66,10 @@ import { setupMonacoEditor } from "~/monaco";
 import MdSidebar from "~/components/edit/toolbar/MdSidebar.vue";
 import { useShortcuts } from "@renovamen/vue-shortcuts";
 import AiToolbar from "~/components/edit/toolbar/AiToolbar.vue";
+
+const props = defineProps<{
+  leftSidebarComponent?: any;
+}>();
 
 const editorRef = ref<HTMLDivElement>();
 

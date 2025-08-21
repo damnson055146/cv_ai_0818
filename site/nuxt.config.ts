@@ -102,7 +102,7 @@ export default defineNuxtConfig({
     //    baseURL: '/'
     // Else if host it on https://example.com/resume
     //    baseURL: '/resume/'
-    baseURL: process.env.NUXT_APP_BASE_URL || '/markdown-resume/', // override with NUXT_APP_BASE_URL='/' in dev
+    baseURL: process.env.NUXT_APP_BASE_URL || '/', // override with NUXT_APP_BASE_URL='/' in dev
     buildAssetsDir: 'assets', // don't use "_" at the begining of the folder name to avoids
     head: {
       viewport: "width=device-width,initial-scale=1",

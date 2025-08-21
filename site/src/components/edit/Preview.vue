@@ -30,6 +30,7 @@
 
 <script lang="ts" setup>
 import { debounce } from "ts-debounce";
+import { useElementSize } from "@vueuse/core";
 import Zoom from "@renovamen/vue-zoom";
 
 const scale = ref(1);
@@ -46,6 +47,15 @@ const fitWidth = () => {
 const fitHeight = () => {
   scale.value = height.value / getPaperPx(styles.paper, "h");
 };
+
+// Auto-fit on mount
+onMounted(() => {
+  nextTick(() => {
+    setTimeout(() => {
+      fitWidth();
+    }, 500);
+  });
+});
 
 watch(width, () => debounce(fitWidth, 100)());
 </script>

@@ -1,6 +1,6 @@
 import type { ModuleOptions } from "@vite-pwa/nuxt";
 
-const scope = "/markdown-resume/";
+const scope = "/";
 
 export const pwa: ModuleOptions = {
   registerType: "autoUpdate",
@@ -34,6 +34,7 @@ export const pwa: ModuleOptions = {
     globPatterns: ["**/*.{js,css,html,otf,ttf,woff2,png,svg}"],
     maximumFileSizeToCacheInBytes: 16000000,
     cleanupOutdatedCaches: true,
+    navigateFallback: null,
     runtimeCaching: [
       {
         urlPattern: /^https:\/\/fonts.googleapis.com\/.*/i,
@@ -43,6 +44,20 @@ export const pwa: ModuleOptions = {
           expiration: {
             maxEntries: 10,
             maxAgeSeconds: 60 * 60 * 24 * 365 // <== 365 days
+          },
+          cacheableResponse: {
+            statuses: [0, 200]
+          }
+        }
+      },
+      {
+        urlPattern: /^https:\/\/api\.iconify\.design\/.*/i,
+        handler: "CacheFirst",
+        options: {
+          cacheName: "iconify-cache",
+          expiration: {
+            maxEntries: 100,
+            maxAgeSeconds: 60 * 60 * 24 * 30 // 30 days
           },
           cacheableResponse: {
             statuses: [0, 200]
