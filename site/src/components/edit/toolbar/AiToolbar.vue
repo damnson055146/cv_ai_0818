@@ -34,6 +34,9 @@
 </template>
 
 <script lang="ts" setup>
+import { useWorkspaceStore } from "~/composables/stores/workspace";
+import { useWorkspaceOperator, OperationType } from "~/composables/workspaceOperator";
+
 const props = defineProps<{ getSelection: () => string; getSelectionRect: () => { x: number; y: number; visible: boolean }; applyText: (text: string) => void }>();
 const root = ref<HTMLElement | null>(null);
 
@@ -84,60 +87,115 @@ onBeforeUnmount(() => {
   if (mouseUpHandler) document.removeEventListener('mouseup', mouseUpHandler, true);
 });
 
+// TODO: [工作区AI操作集成] 集成工作区操作管理器
+// 当前: 直接调用API进行AI重写
+// 增强: 通过工作区操作管理器进行AI操作，支持键鼠锁定和状态管理
 const run = async () => {
   const input = props.getSelection();
   if (!input) return;
 
   try {
-    // Preserve formatting via instruction & examples
-    const examples = `Examples of formatting to preserve:\n- Bold: **text**\n- Italic: *text*\n- Code: \`code\`\n- Links: [text](url)\n- Images: ![alt](url)\n- Crossref: [~P1] and [~P1]: Definition\n- Headings: #, ##, ### prefixes\n- Lists: -, 1., >, : prefixes\nIf the selection contains formatting markers, keep the structure and only rewrite natural language text.`;
-
-    const combined = `${prompt.value}\n\n${examples}\n\n<selection>\n${input}\n</selection>`;
-
-    const body = {
-      model: 'o3',
-      input: combined,
-      reasoning: { effort: 'high' },
-      max_output_tokens: 512
-    };
-
-    const base = (window as any).__NUXT__?.config?.app?.baseURL || '/';
-    const apiURL = (base.endsWith('/') ? base : base + '/') + 'api/ai';
-    let res = await fetch(apiURL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // no direct key on client
-      },
-      body: JSON.stringify(body)
-    });
-    if (!res.ok) {
-      throw new Error(await res.text());
-    }
-    const data = await res.json();
-    // Extract text robustly for Responses API
-    const pickOutputText = (d: any): string => {
-      if (typeof d?.output_text === 'string') return d.output_text;
-      if (typeof d?.text === 'string') return d.text;
-      const arr = Array.isArray(d?.output) ? d.output : [];
-      for (const item of arr) {
-        if (item?.type === 'message' && Array.isArray(item?.content)) {
-          const outTxt = item.content.find((c: any) => c?.type === 'output_text' && typeof c?.text === 'string');
-          if (outTxt) return outTxt.text as string;
-          const anyTxt = item.content.find((c: any) => typeof c?.text === 'string');
-          if (anyTxt) return anyTxt.text as string;
-        }
+    // 尝试通过工作区操作管理器执行AI操作
+    const workspaceStore = useWorkspaceStore?.()
+    
+    if (workspaceStore) {
+      console.log('[AiToolbar] 通过工作区操作管理器执行AI重写')
+      
+      // 构建AI操作需求
+      const requirement = {
+        action: 'edit',
+        target: 'selection',
+        parameters: {
+          prompt: prompt.value,
+          preserveFormatting: true,
+          selectedText: input
+        },
+        prompt: `${prompt.value}\n\n选中文本: ${input}`
       }
-      return '';
-    };
-    const output = pickOutputText(data);
-    if (output) {
-      previewText.value = output;
-      showPreview.value = true;
+      
+      // 通过工作区管理器添加操作
+      const operator = useWorkspaceOperator()
+      const operationId = await operator.addOperation({
+        type: OperationType.AI_LLM,
+        description: `AI工具栏重写: ${input.substring(0, 50)}...`,
+        priority: 1,
+        payload: requirement,
+        onComplete: (result: any) => {
+          console.log('[AiToolbar] AI重写操作完成:', result)
+          if (result.text) {
+            previewText.value = result.text
+            showPreview.value = true
+          }
+        },
+        onError: (error: Error) => {
+          console.error('[AiToolbar] AI重写操作失败:', error)
+          alert(`AI操作失败: ${error.message}`)
+        }
+      })
+      
+      console.log(`[AiToolbar] AI重写操作已添加到队列，ID: ${operationId}`)
+      return
     }
+    
+    // 如果工作区管理器不可用，回退到原有实现
+    console.log('[AiToolbar] 工作区管理器不可用，使用原有AI调用方式')
+    await runLegacyAiOperation(input)
+    
   } catch (e: any) {
-    console.error(e);
-    alert(`OpenAI error: ${e.message || e}`);
+    console.error('[AiToolbar] AI操作失败:', e);
+    alert(`AI操作失败: ${e.message || e}`);
+  }
+};
+
+/**
+ * 原有的AI操作实现（作为后备）
+ */
+const runLegacyAiOperation = async (input: string) => {
+  // Preserve formatting via instruction & examples
+  const examples = `Examples of formatting to preserve:\n- Bold: **text**\n- Italic: *text*\n- Code: \`code\`\n- Links: [text](url)\n- Images: ![alt](url)\n- Crossref: [~P1] and [~P1]: Definition\n- Headings: #, ##, ### prefixes\n- Lists: -, 1., >, : prefixes\nIf the selection contains formatting markers, keep the structure and only rewrite natural language text.`;
+
+  const combined = `${prompt.value}\n\n${examples}\n\n<selection>\n${input}\n</selection>`;
+
+  const body = {
+    model: 'o3',
+    input: combined,
+    reasoning: { effort: 'high' },
+    max_output_tokens: 512
+  };
+
+  const base = (window as any).__NUXT__?.config?.app?.baseURL || '/';
+  const apiURL = (base.endsWith('/') ? base : base + '/') + 'api/ai';
+  let res = await fetch(apiURL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      // no direct key on client
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  const data = await res.json();
+  // Extract text robustly for Responses API
+  const pickOutputText = (d: any): string => {
+    if (typeof d?.output_text === 'string') return d.output_text;
+    if (typeof d?.text === 'string') return d.text;
+    const arr = Array.isArray(d?.output) ? d.output : [];
+    for (const item of arr) {
+      if (item?.type === 'message' && Array.isArray(item?.content)) {
+        const outTxt = item.content.find((c: any) => c?.type === 'output_text' && typeof c?.text === 'string');
+        if (outTxt) return outTxt.text as string;
+        const anyTxt = item.content.find((c: any) => typeof c?.text === 'string');
+        if (anyTxt) return anyTxt.text as string;
+      }
+    }
+    return '';
+  };
+  const output = pickOutputText(data);
+  if (output) {
+    previewText.value = output;
+    showPreview.value = true;
   }
 };
 watch(selectedPreset, (name) => {

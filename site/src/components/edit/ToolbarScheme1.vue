@@ -1,5 +1,5 @@
 <template>
-  <div class="vertical-tabs-toolbar flex h-full w-72 bg-c border-r border-c">
+  <div class="vertical-tabs-toolbar flex h-full w-64 bg-c border-r border-c">
     <!-- 左侧标签导航 -->
     <div class="tabs-nav flex flex-col w-12 bg-darker-c border-r border-c">
       <button
@@ -7,7 +7,7 @@
         :key="tab.id"
         @click="activeTab = tab.id"
         :class="[
-          'tab-btn flex-center flex-col p-3 text-xs transition-all duration-200',
+          'tab-btn flex-center flex-col p-2 text-xs transition-all duration-200',
           activeTab === tab.id
             ? 'bg-brand text-white shadow-md'
             : 'text-c hover:bg-dark-c hover:text-dark-c'
@@ -21,14 +21,14 @@
 
     <!-- 右侧内容区域 -->
     <div class="tab-content flex-1 overflow-y-auto">
-      <div class="p-4">
-        <h3 class="text-base font-medium text-dark-c mb-4 flex items-center">
+      <div class="p-3">
+        <h3 class="text-sm font-medium text-dark-c mb-3 flex items-center">
           <span :class="currentTab.icon" class="mr-2" />
           {{ currentTab.label }}
         </h3>
         
         <!-- 动态内容区域 -->
-        <div class="space-y-4">
+        <div class="space-y-3">
           <div v-if="activeTab === 'document'">
             <File />
           </div>

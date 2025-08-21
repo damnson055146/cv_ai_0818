@@ -19,8 +19,38 @@
     </div>
 
     <div class="flex h-full min-h-0">
+      <MdSidebar
+        v-if="!props.leftSidebarComponent"
+        class="flex-none border-r border-c bg-c/50"
+        :state="sidebarState"
+        @toggle-italic="() => toggleInlineWrap('*')"
+        @toggle-bold="() => toggleInlineWrap('**')"
+        @toggle-span="() => toggleSpan()"
+        @toggle-h1="() => toggleLinePrefix('# ')"
+        @toggle-h2="() => toggleLinePrefix('## ')"
+        @toggle-h3="() => toggleLinePrefix('### ')"
+        @toggle-list="() => toggleLinePrefix('- ')"
+        @toggle-ol="() => toggleLinePrefix('1. ')"
+        @toggle-colon="() => toggleLinePrefix(': ')"
+        @wrap-link="(url: string) => wrapLink(url)"
+        @wrap-image="(url: string) => wrapImage(url)"
+        @wrap-crossref="(name: string) => wrapWith(`[~${name}]`, '')"
+        @insert-crossref-def="(name: string) => insertCrossrefDef(name)"
+        @add-internship-title="() => insertTemplate('internship-title')"
+        @add-internship-entry="() => insertTemplate('internship-entry')"
+        @add-campus-title="() => insertTemplate('campus-title')"
+        @add-campus-entry="() => insertTemplate('campus-entry')"
+        @add-research-title="() => insertTemplate('research-title')"
+        @add-research-entry="() => insertTemplate('research-entry')"
+        @add-project-title="() => insertTemplate('project-title')"
+        @add-project-entry="() => insertTemplate('project-entry')"
+        @add-publication-title="() => insertTemplate('pub-title')"
+        @add-publication-entry="() => insertTemplate('pub-entry')"
+        @add-skills="() => insertTemplate('skills')"
+      />
       <component
-        :is="props.leftSidebarComponent || 'MdSidebar'"
+        v-else
+        :is="props.leftSidebarComponent"
         class="flex-none border-r border-c bg-c/50"
         :state="sidebarState"
         @toggle-italic="() => toggleInlineWrap('*')"
@@ -60,11 +90,26 @@
 <script lang="ts" setup>
 import type * as Monaco from "monaco-editor";
 import * as tabs from "@zag-js/tabs";
+import { useWorkspaceStore } from "~/composables/stores/workspace";
+import { useWorkspaceOperator } from "~/composables/workspaceOperator";
 import { normalizeProps, useMachine } from "@zag-js/vue";
-import { isClient } from "@renovamen/utils";
+// import { isClient } from "@renovamen/utils";
+const isClient = typeof window !== "undefined";
 import { setupMonacoEditor } from "~/monaco";
 import MdSidebar from "~/components/edit/toolbar/MdSidebar.vue";
-import { useShortcuts } from "@renovamen/vue-shortcuts";
+// import { useShortcuts } from "@renovamen/vue-shortcuts";
+const useShortcuts = (keys: string, cb: () => void) => {
+  // 简化版实现，避免包依赖问题
+  if (!isClient) return;
+  const handleKeydown = (e: KeyboardEvent) => {
+    if (keys.includes('ctrl') && e.ctrlKey && keys.includes(e.key)) {
+      e.preventDefault();
+      cb();
+    }
+  };
+  document.addEventListener('keydown', handleKeydown);
+  return () => document.removeEventListener('keydown', handleKeydown);
+};
 import AiToolbar from "~/components/edit/toolbar/AiToolbar.vue";
 
 const props = defineProps<{
@@ -87,16 +132,30 @@ let editor:
     }
   | undefined;
 
+// TODO: [工作区事件监听] 当前Monaco编辑器事件监听
+// 当前功能: 基础的光标和内容变化监听，用于侧边栏状态更新
+// 扩展计划:
+// 1. 添加工作区操作事件队列 ✓
+// 2. 集成键鼠锁定机制 ✓
+// 3. 支持AI操作的异步执行和状态管理 ✓
 // Setup Monaco editor
 onMounted(async () => {
   if (isClient && editorRef.value && !editor) {
     editor = await setupMonacoEditor(editorRef.value);
     activate("markdown");
+    
     // bind listeners for sidebar state
     const ed = editor.editor;
-    ed.onDidChangeCursorSelection(() => refreshSidebarState());
+    ed.onDidChangeCursorSelection(() => {
+      refreshSidebarState();
+      // 更新工作区选区信息
+      updateWorkspaceSelection();
+    });
     ed.onDidChangeModelContent(() => refreshSidebarState());
     refreshSidebarState();
+    
+    // 初始化工作区集成
+    initializeWorkspaceIntegration();
 
     // Ensure paste works even if some global handlers block default behavior
     const pasteHandler = (e: ClipboardEvent) => {
@@ -181,6 +240,211 @@ const [state, send] = useMachine(
 );
 const api = computed(() => tabs.connect(state.value, send, normalizeProps));
 
+// 工作区集成
+const workspaceStore = useWorkspaceStore();
+
+/**
+ * 更新工作区选区信息
+ */
+const updateWorkspaceSelection = () => {
+  if (!editor) return;
+  
+  const model = editor.editor.getModel();
+  const selection = editor.editor.getSelection();
+  
+  if (model && selection) {
+    const selectedText = model.getValueInRange(selection);
+    const startOffset = model.getOffsetAt(selection.getStartPosition());
+    const endOffset = model.getOffsetAt(selection.getEndPosition());
+    
+    workspaceStore.updateSelection(selectedText, startOffset, endOffset);
+  }
+};
+
+/**
+ * 初始化工作区集成
+ */
+const initializeWorkspaceIntegration = () => {
+  if (!editor) return;
+  
+  console.log('[Editor] 初始化工作区集成');
+  
+  // 激活AI助手
+  workspaceStore.activateAiAssistant();
+  
+  // 监听工作区操作完成事件（通过工作区操作管理器）
+  const operator = useWorkspaceOperator();
+  
+  operator.on('operationComplete', (data: any) => {
+    if (data.operation.type === 'editor' && data.success) {
+      console.log('[Editor] 工作区编辑器操作完成:', data.operation);
+      // 可以在这里处理操作结果，比如更新编辑器内容
+    }
+  });
+  
+  // 监听锁定状态变化
+  operator.on('lockStateChanged', (data: any) => {
+    console.log('[Editor] 工作区锁定状态变化:', data);
+    if (data.locked) {
+      // 可以在编辑器UI上显示锁定状态
+      console.log(`[Editor] 编辑器被锁定: ${data.reason}`);
+    } else {
+      console.log('[Editor] 编辑器解除锁定');
+    }
+  });
+  
+  // 监听AI操作结果事件
+  const handleAiResult = (event: any) => {
+    const { action, target, result, originalText, hasSelection } = event.detail;
+    console.log('[Editor] 收到AI操作结果:', { action, target, resultLength: result?.length });
+    
+    applyAiResultToMonaco(action, target, result, originalText, hasSelection);
+  };
+  
+  document.addEventListener('workspace-ai-result', handleAiResult);
+  
+  // 清理事件监听器
+  onBeforeUnmount(() => {
+    document.removeEventListener('workspace-ai-result', handleAiResult);
+  });
+};
+
+/**
+ * 将AI结果应用到Monaco编辑器
+ */
+const applyAiResultToMonaco = (action: string, target: string, result: string, originalText: string, hasSelection: boolean) => {
+  if (!editor) {
+    console.warn('[Editor] Monaco编辑器未初始化，无法应用AI结果');
+    return;
+  }
+  
+  const ed = editor.editor;
+  const model = ed.getModel();
+  
+  if (!model) {
+    console.warn('[Editor] Monaco模型未找到');
+    return;
+  }
+  
+  try {
+    console.log(`[Editor] 应用AI结果到Monaco: ${action}`, { target, hasSelection, resultLength: result?.length });
+    
+    if (action === 'edit' && hasSelection) {
+      // 编辑操作：替换选中文本
+      const selection = ed.getSelection();
+      if (selection) {
+        const range = selection;
+        const editOperation = {
+          range: range,
+          text: result,
+          forceMoveMarkers: true
+        };
+        
+        ed.executeEdits('ai-edit', [editOperation]);
+        
+        // 选中新插入的文本
+        const newEndPosition = {
+          lineNumber: range.startLineNumber + (result.split('\n').length - 1),
+          column: result.includes('\n') 
+            ? result.split('\n').pop()!.length + 1 
+            : range.startColumn + result.length
+        };
+        
+        ed.setSelection({
+          startLineNumber: range.startLineNumber,
+          startColumn: range.startColumn,
+          endLineNumber: newEndPosition.lineNumber,
+          endColumn: newEndPosition.column
+        });
+        
+        console.log('[Editor] ✅ 已替换选中文本');
+      }
+    } else if (action === 'generate') {
+      // 生成操作：在当前光标位置插入内容
+      const position = ed.getPosition();
+      if (position) {
+        const editOperation = {
+          range: {
+            startLineNumber: position.lineNumber,
+            startColumn: position.column,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column
+          },
+          text: result,
+          forceMoveMarkers: true
+        };
+        
+        ed.executeEdits('ai-generate', [editOperation]);
+        
+        // 移动光标到插入内容的末尾
+        const lines = result.split('\n');
+        const newPosition = {
+          lineNumber: position.lineNumber + lines.length - 1,
+          column: lines.length > 1 ? lines[lines.length - 1].length + 1 : position.column + result.length
+        };
+        
+        ed.setPosition(newPosition);
+        
+        console.log('[Editor] ✅ 已在光标位置插入生成内容');
+      }
+    } else if (action === 'format' && hasSelection) {
+      // 格式化操作：替换选中文本
+      const selection = ed.getSelection();
+      if (selection) {
+        const editOperation = {
+          range: selection,
+          text: result,
+          forceMoveMarkers: true
+        };
+        
+        ed.executeEdits('ai-format', [editOperation]);
+        console.log('[Editor] ✅ 已格式化选中文本');
+      }
+    } else if (action === 'translate' && hasSelection) {
+      // 翻译操作：替换选中文本
+      const selection = ed.getSelection();
+      if (selection) {
+        const editOperation = {
+          range: selection,
+          text: result,
+          forceMoveMarkers: true
+        };
+        
+        ed.executeEdits('ai-translate', [editOperation]);
+        console.log('[Editor] ✅ 已翻译选中文本');
+      }
+    } else if (action === 'analyze') {
+      // 分析操作：在文档末尾添加分析结果
+      const lastLine = model.getLineCount();
+      const lastColumn = model.getLineMaxColumn(lastLine);
+      
+      const analysisText = `\n\n<!-- AI分析结果 -->\n${result}\n`;
+      
+      const editOperation = {
+        range: {
+          startLineNumber: lastLine,
+          startColumn: lastColumn,
+          endLineNumber: lastLine,
+          endColumn: lastColumn
+        },
+        text: analysisText,
+        forceMoveMarkers: true
+      };
+      
+      ed.executeEdits('ai-analyze', [editOperation]);
+      console.log('[Editor] ✅ 已添加分析结果到文档末尾');
+    } else {
+      console.warn(`[Editor] 未知的AI操作类型: ${action}`);
+    }
+    
+    // 聚焦编辑器
+    ed.focus();
+    
+  } catch (error) {
+    console.error('[Editor] 应用AI结果失败:', error);
+  }
+};
+
 // Markdown operations
 const sidebarState = reactive({
   italic: false,
@@ -191,6 +455,7 @@ const sidebarState = reactive({
   h3: false,
   ul: false,
   ol: false,
+  quote: false,
   colon: false,
   link: false,
   image: false,

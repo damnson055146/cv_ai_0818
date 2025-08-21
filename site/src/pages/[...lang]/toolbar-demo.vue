@@ -103,6 +103,16 @@
         />
       </div>
     </div>
+    
+    <!-- 工作区AI操作功能演示 -->
+    <div class="demo-section bg-white dark:bg-slate-800 p-6 m-6 rounded-xl shadow-lg">
+      <WorkspaceOperatorDemo />
+    </div>
+    
+    <!-- AI操作功能测试 -->
+    <div class="demo-section bg-white dark:bg-slate-800 p-6 m-6 rounded-xl shadow-lg">
+      <AiOperationTest />
+    </div>
   </div>
 </template>
 
@@ -110,6 +120,8 @@
 import ToolbarScheme1 from '~/components/edit/ToolbarScheme1.vue'
 import ToolbarScheme2 from '~/components/edit/ToolbarScheme2.vue'
 import ToolbarScheme3 from '~/components/edit/ToolbarScheme3.vue'
+import WorkspaceOperatorDemo from '~/components/shared/WorkspaceOperatorDemo.vue'
+import AiOperationTest from '~/components/shared/AiOperationTest.vue'
 
 const currentScheme = ref('scheme1')
 

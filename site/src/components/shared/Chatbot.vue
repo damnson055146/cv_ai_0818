@@ -139,6 +139,11 @@
 
 <script setup lang="ts">
 import { useLocalStorage } from "@vueuse/core";
+import { useWorkspaceStore } from "~/composables/stores/workspace";
+import { useAiRequirementParser } from "~/composables/aiRequirementParser";
+import type { AiRequirement } from "~/composables/workspaceOperator";
+import { useWorkspaceOperator } from "~/composables/workspaceOperator";
+
 type Role = "user" | "assistant" | "system";
 interface Message {
   id: number;
@@ -336,8 +341,63 @@ function resetInputHeight() {
   el.style.overflowY = "hidden";
 }
 
-// Demo assistant (replace with real API if needed)
+// TODO: [工作区AI操作] 扩展AI助手支持工作区操作命令解析和执行
+// 当前功能: 基础的AI对话助手，支持OpenAI API调用
+// 扩展计划: 
+// 1. 添加需求解析器，识别工作区操作指令 ✓
+// 2. 集成工作区操作管理器 ✓
+// 3. 支持异步操作队列和进度反馈 ✓
 async function simulateAssistant(userText: string) {
+  // 首先尝试解析是否为工作区操作命令
+  const workspaceStore = useWorkspaceStore?.() // 可选链，避免在某些环境下出错
+  
+  if (workspaceStore) {
+    try {
+      const parser = useAiRequirementParser()
+      const parsedCommand = parser.parse(userText)
+      
+      if (parsedCommand.type === 'workspace' && parsedCommand.confidence > 0.5) {
+        console.log('[Chatbot] 识别到工作区操作命令:', parsedCommand)
+        
+        // 显示正在处理工作区操作
+        isThinking.value = true
+        pushMessage({ 
+          role: "assistant", 
+          content: `正在处理工作区操作: ${parsedCommand.requirement?.action}...`
+        })
+        
+        try {
+          // 直接调用AI API处理工作区操作，而不是通过workspaceStore
+          const aiResult = await processWorkspaceAiOperation(parsedCommand.requirement!, userText)
+          
+          if (aiResult.success) {
+            pushMessage({ 
+              role: "assistant", 
+              content: `✅ 操作完成！${aiResult.description || ''}`
+            })
+          } else {
+            pushMessage({ 
+              role: "assistant", 
+              content: `❌ 操作失败: ${aiResult.error}`
+            })
+          }
+          return
+        } catch (error) {
+          console.error('[Chatbot] 工作区操作失败:', error)
+          pushMessage({ 
+            role: "assistant", 
+            content: `工作区操作失败: ${error instanceof Error ? error.message : String(error)}`
+          })
+          return
+        } finally {
+          isThinking.value = false
+        }
+      }
+    } catch (error) {
+      console.error('[Chatbot] 工作区操作解析失败:', error)
+      // 继续执行普通聊天流程
+    }
+  }
   isThinking.value = true;
   try {
     // Ensure no legacy HTML blobs remain in history before building payload
@@ -579,6 +639,178 @@ function sanitizeForDisplay(text: string): string {
 function purgeHtmlFromHistory() {
   const before = messages.value.length;
   messages.value = messages.value.filter((m) => !isHtmlLike(ensureText(m.content)));
+}
+
+/**
+ * 统一处理工作区AI操作
+ */
+async function processWorkspaceAiOperation(requirement: AiRequirement, originalInput: string) {
+  const workspaceStore = useWorkspaceStore()
+  
+  try {
+    console.log('[Chatbot] 统一处理工作区AI操作:', requirement)
+    
+    // 1. 锁定键鼠操作
+    const operator = useWorkspaceOperator()
+    operator.lockKeyboardMouse('chatbot-ai-operation', `正在执行${requirement.action}操作`)
+    
+    // 2. 获取选中文本
+    const selectedText = workspaceStore.state.currentSelection.hasSelection 
+      ? workspaceStore.state.currentSelection.text 
+      : ''
+    
+    // 3. 构建AI提示
+    const aiPrompt = buildWorkspaceAiPrompt(requirement, selectedText, originalInput)
+    
+    // 4. 调用AI API (复用现有的聊天机器人AI调用逻辑)
+    const aiResponse = await callAiForWorkspace(aiPrompt)
+    
+    // 5. 应用AI结果到编辑器
+    const applyResult = await applyAiResultToEditor(requirement, aiResponse, selectedText)
+    
+    // 6. 解锁键鼠操作
+    operator.unlockKeyboardMouse()
+    
+    return {
+      success: true,
+      description: applyResult.description,
+      result: aiResponse
+    }
+    
+  } catch (error) {
+    console.error('[Chatbot] 工作区AI操作失败:', error)
+    
+    // 确保解锁
+    const operator = useWorkspaceOperator()
+    operator.unlockKeyboardMouse()
+    
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+/**
+ * 构建工作区AI提示
+ */
+function buildWorkspaceAiPrompt(requirement: AiRequirement, selectedText: string, originalInput: string): string {
+  const { action, target, parameters } = requirement
+  
+  let prompt = originalInput
+  
+  // 根据操作类型构建专用提示
+  if (action === 'edit' && selectedText) {
+    prompt += `\n\n选中的文本:\n${selectedText}\n\n请按要求修改上述选中文本，保持原有格式，只返回修改后的文本，不要添加任何解释。`
+  } else if (action === 'format' && selectedText) {
+    const style = parameters?.style || 'unknown'
+    prompt += `\n\n选中的文本:\n${selectedText}\n\n请将上述文本格式化为${style}格式，只返回格式化后的文本。`
+  } else if (action === 'generate') {
+    prompt += `\n\n请根据要求生成内容，只返回生成的内容，不要添加任何解释。`
+  } else if (action === 'analyze' && selectedText) {
+    prompt += `\n\n要分析的文本:\n${selectedText}\n\n请分析上述文本并提供详细反馈。`
+  } else if (action === 'translate' && selectedText) {
+    const targetLang = parameters?.targetLanguage || 'english'
+    prompt += `\n\n要翻译的文本:\n${selectedText}\n\n请翻译为${targetLang}，只返回翻译结果。`
+  }
+  
+  return prompt
+}
+
+/**
+ * 调用AI API处理工作区操作
+ */
+async function callAiForWorkspace(prompt: string): Promise<string> {
+  // 复用现有的AI调用逻辑
+  const endpoint = effectiveApiBaseNormalized.value
+  
+  if (!endpoint) {
+    throw new Error('AI API端点未配置')
+  }
+  
+  const useResponsesApi = selectedModel.value.startsWith('o3')
+  
+  if (useResponsesApi) {
+    const payload = {
+      model: apiModel.value,
+      input: prompt,
+      temperature: temperature.value,
+      max_output_tokens: maxTokens.value
+    }
+    
+    const res = await $fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: { ...payload, model: selectedModel.value }
+    })
+    
+    return sanitizeForDisplay(ensureText(normalizeResponsesOutput(res)))
+  } else {
+    const payload = {
+      model: apiModel.value,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      temperature: temperature.value,
+      ...(selectedModel.value === 'gpt-5'
+        ? { max_completion_tokens: maxTokens.value }
+        : { max_tokens: maxTokens.value })
+    }
+    
+    const res: any = await requestChatCompletions(endpoint, payload)
+    return sanitizeForDisplay(ensureText(
+      res?.choices?.[0]?.message?.content ??
+      res?.reply ??
+      (typeof res === "string" ? res : JSON.stringify(res))
+    ))
+  }
+}
+
+/**
+ * 将AI结果应用到编辑器
+ */
+async function applyAiResultToEditor(requirement: AiRequirement, aiResult: string, selectedText: string) {
+  const { action, target } = requirement
+  
+  // 通过事件通知编辑器更新内容
+  const event = new CustomEvent('workspace-ai-result', {
+    detail: {
+      action,
+      target,
+      result: aiResult,
+      originalText: selectedText,
+      hasSelection: selectedText.length > 0
+    }
+  })
+  
+  document.dispatchEvent(event)
+  
+  let description = ''
+  
+  switch (action) {
+    case 'edit':
+      description = selectedText ? '已修改选中文本' : '已完成编辑'
+      break
+    case 'format':
+      description = '已格式化文本'
+      break
+    case 'generate':
+      description = '已生成新内容'
+      break
+    case 'analyze':
+      description = '已完成分析'
+      break
+    case 'translate':
+      description = '已翻译文本'
+      break
+    default:
+      description = '操作已完成'
+  }
+  
+  return { description }
 }
 
 // Utilities to build context
