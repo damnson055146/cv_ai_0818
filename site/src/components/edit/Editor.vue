@@ -295,17 +295,33 @@ const initializeWorkspaceIntegration = () => {
   
   // 监听AI操作结果事件
   const handleAiResult = (event: any) => {
-    const { action, target, result, originalText, hasSelection } = event.detail;
-    console.log('[Editor] 收到AI操作结果:', { action, target, resultLength: result?.length });
+    const { action, target, result, originalText, hasSelection, isSmartEdit, scope } = event.detail;
+    console.log('[Editor] 收到AI操作结果:', { action, target, resultLength: result?.length, isSmartEdit });
     
-    applyAiResultToMonaco(action, target, result, originalText, hasSelection);
+    if (isSmartEdit) {
+      applySmartEditToMonaco(action, scope, result, originalText);
+    } else {
+      applyAiResultToMonaco(action, target, result, originalText, hasSelection);
+    }
+  };
+  
+  // 监听获取文档内容事件
+  const handleGetDocumentContent = (event: any) => {
+    const { callback } = event.detail;
+    if (editor && callback) {
+      const model = editor.editor.getModel();
+      const content = model ? model.getValue() : '';
+      callback(content);
+    }
   };
   
   document.addEventListener('workspace-ai-result', handleAiResult);
+  document.addEventListener('get-document-content', handleGetDocumentContent);
   
   // 清理事件监听器
   onBeforeUnmount(() => {
     document.removeEventListener('workspace-ai-result', handleAiResult);
+    document.removeEventListener('get-document-content', handleGetDocumentContent);
   });
 };
 
@@ -443,6 +459,149 @@ const applyAiResultToMonaco = (action: string, target: string, result: string, o
   } catch (error) {
     console.error('[Editor] 应用AI结果失败:', error);
   }
+};
+
+/**
+ * 将智能编辑结果应用到Monaco编辑器
+ */
+const applySmartEditToMonaco = (action: string, scope: string, result: string, originalText: string) => {
+  if (!editor) {
+    console.warn('[Editor] Monaco编辑器未初始化，无法应用智能编辑结果');
+    return;
+  }
+  
+  const ed = editor.editor;
+  const model = ed.getModel();
+  
+  if (!model) {
+    console.warn('[Editor] Monaco模型未找到');
+    return;
+  }
+  
+  try {
+    console.log(`[Editor] 应用智能编辑到Monaco: ${action} - ${scope}`, { resultLength: result?.length });
+    
+    if (scope === '全文') {
+      // 全文替换
+      const fullRange = {
+        startLineNumber: 1,
+        startColumn: 1,
+        endLineNumber: model.getLineCount(),
+        endColumn: model.getLineMaxColumn(model.getLineCount())
+      };
+      
+      const editOperation = {
+        range: fullRange,
+        text: result,
+        forceMoveMarkers: true
+      };
+      
+      ed.executeEdits('ai-smart-edit-full', [editOperation]);
+      
+      // 移动光标到文档开始
+      ed.setPosition({ lineNumber: 1, column: 1 });
+      
+      console.log('[Editor] ✅ 已进行全文智能编辑');
+    } else if (scope.includes('段落') || scope.includes('标题') || scope.includes('列表')) {
+      // 尝试智能定位到相关内容并替换
+      const content = model.getValue();
+      
+      if (originalText && originalText.trim()) {
+        // 如果有明确的目标内容，查找并替换
+        const startIndex = content.indexOf(originalText);
+        if (startIndex !== -1) {
+          const startPosition = model.getPositionAt(startIndex);
+          const endPosition = model.getPositionAt(startIndex + originalText.length);
+          
+          const editOperation = {
+            range: {
+              startLineNumber: startPosition.lineNumber,
+              startColumn: startPosition.column,
+              endLineNumber: endPosition.lineNumber,
+              endColumn: endPosition.column
+            },
+            text: result,
+            forceMoveMarkers: true
+          };
+          
+          ed.executeEdits('ai-smart-edit-partial', [editOperation]);
+          
+          // 选中编辑后的内容
+          const newEndPosition = model.getPositionAt(startIndex + result.length);
+          ed.setSelection({
+            startLineNumber: startPosition.lineNumber,
+            startColumn: startPosition.column,
+            endLineNumber: newEndPosition.lineNumber,
+            endColumn: newEndPosition.column
+          });
+          
+          console.log(`[Editor] ✅ 已进行${scope}智能编辑（精确定位）`);
+        } else {
+          // 找不到原始内容，在文档末尾添加
+          addResultToDocumentEnd(result, `智能编辑结果 (${scope})`);
+        }
+      } else {
+        // 没有明确目标内容，在文档末尾添加
+        addResultToDocumentEnd(result, `智能编辑结果 (${scope})`);
+      }
+    } else {
+      // 其他情况，在当前光标位置插入或文档末尾添加
+      const position = ed.getPosition();
+      if (position) {
+        const editOperation = {
+          range: {
+            startLineNumber: position.lineNumber,
+            startColumn: position.column,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column
+          },
+          text: result,
+          forceMoveMarkers: true
+        };
+        
+        ed.executeEdits('ai-smart-edit-insert', [editOperation]);
+        console.log(`[Editor] ✅ 已在光标位置插入智能编辑结果 (${scope})`);
+      } else {
+        addResultToDocumentEnd(result, `智能编辑结果 (${scope})`);
+      }
+    }
+    
+    // 聚焦编辑器
+    ed.focus();
+    
+  } catch (error) {
+    console.error('[Editor] 应用智能编辑结果失败:', error);
+  }
+};
+
+/**
+ * 在文档末尾添加结果
+ */
+const addResultToDocumentEnd = (result: string, label: string) => {
+  if (!editor) return;
+  
+  const ed = editor.editor;
+  const model = ed.getModel();
+  if (!model) return;
+  
+  const lastLine = model.getLineCount();
+  const lastColumn = model.getLineMaxColumn(lastLine);
+  
+  const resultText = `\n\n<!-- ${label} -->\n${result}\n`;
+  
+  const editOperation = {
+    range: {
+      startLineNumber: lastLine,
+      startColumn: lastColumn,
+      endLineNumber: lastLine,
+      endColumn: lastColumn
+    },
+    text: resultText,
+    forceMoveMarkers: true
+  };
+  
+  ed.executeEdits('ai-smart-edit-append', [editOperation]);
+  console.log(`[Editor] ✅ 已在文档末尾添加${label}`);
 };
 
 // Markdown operations

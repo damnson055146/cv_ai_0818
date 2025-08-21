@@ -31,6 +31,26 @@
           </div>
         </div>
         <div class="hstack space-x-1">
+          <!-- 模式切换按钮 -->
+          <div class="hstack space-x-1 mr-2">
+            <button 
+              @click="setMode('ask')"
+              class="mode-btn"
+              :class="currentMode === 'ask' ? 'mode-btn-active' : 'mode-btn-inactive'"
+              title="问答模式"
+            >
+              <span class="i-ph:chat-duotone text-sm" />
+            </button>
+            <button 
+              @click="setMode('edit')"
+              class="mode-btn"
+              :class="currentMode === 'edit' ? 'mode-btn-active' : 'mode-btn-inactive'"
+              title="编辑模式"
+            >
+              <span class="i-ph:pencil-duotone text-sm" />
+            </button>
+          </div>
+          
           <button class="round-btn" title="Settings" @click="toggleSettings">
             <span class="i-ph:gear-six-duotone" />
           </button>
@@ -121,7 +141,7 @@
             v-model="draft"
             class="flex-1 resize-none bg-transparent border-0 outline-none px-1 py-1 text-sm"
             rows="1"
-            placeholder="询问任何问题"
+            :placeholder="currentMode === 'ask' ? '询问任何问题...' : '输入编辑指令...'"
             @keydown.enter.exact.prevent="handleSend"
             @input="autoGrow"
           />
@@ -162,6 +182,9 @@ const messages = useLocalStorage<Message[]>(
   [{ id: 1, role: "assistant", content: "Hi! I'm your Chatbot. How can I help you today?" }]
 );
 const isThinking = ref(false);
+
+// 模式管理
+const currentMode = useLocalStorage<'ask' | 'edit'>('chatbot.mode', 'edit');
 
 const bubbleRef = ref<HTMLButtonElement | null>(null);
 const inputRef = ref<HTMLTextAreaElement | null>(null);
@@ -283,6 +306,14 @@ function toggleSettings() {
   showSettings.value = !showSettings.value;
 }
 
+/**
+ * 设置AI助手模式
+ */
+function setMode(mode: 'ask' | 'edit') {
+  currentMode.value = mode;
+  console.log(`[Chatbot] 切换到${mode === 'ask' ? '问答' : '编辑'}模式`);
+}
+
 const canSend = computed(() => draft.value.trim().length > 0 && !isThinking.value);
 
 function handleSend() {
@@ -348,54 +379,45 @@ function resetInputHeight() {
 // 2. 集成工作区操作管理器 ✓
 // 3. 支持异步操作队列和进度反馈 ✓
 async function simulateAssistant(userText: string) {
-  // 首先尝试解析是否为工作区操作命令
-  const workspaceStore = useWorkspaceStore?.() // 可选链，避免在某些环境下出错
+  console.log(`[Chatbot] 处理用户输入 - 模式: ${currentMode.value}`)
   
-  if (workspaceStore) {
-    try {
-      const parser = useAiRequirementParser()
-      const parsedCommand = parser.parse(userText)
-      
-      if (parsedCommand.type === 'workspace' && parsedCommand.confidence > 0.5) {
-        console.log('[Chatbot] 识别到工作区操作命令:', parsedCommand)
+  // 根据模式选择处理方式
+  if (currentMode.value === 'ask') {
+    // 问答模式：直接调用原有聊天机器人逻辑
+    console.log('[Chatbot] 问答模式，直接调用AI')
+    await processChatMode(userText)
+    return
+  }
+  
+  // 编辑模式：处理工作区操作
+  if (currentMode.value === 'edit') {
+    const workspaceStore = useWorkspaceStore?.()
+    
+    if (workspaceStore) {
+      try {
+        console.log('[Chatbot] 编辑模式，分析操作意图')
         
-        // 显示正在处理工作区操作
-        isThinking.value = true
+        // 检查是否有选中文本
+        const hasSelection = workspaceStore.state.currentSelection.hasSelection
+        
+        if (hasSelection) {
+          // 有选中文本：直接进行编辑操作
+          console.log('[Chatbot] 检测到选中文本，直接编辑')
+          await processSelectionEdit(userText)
+        } else {
+          // 无选中文本：使用小LLM识别操作范围
+          console.log('[Chatbot] 无选中文本，使用小LLM识别操作范围')
+          await processSmartEdit(userText)
+        }
+        return
+      } catch (error) {
+        console.error('[Chatbot] 编辑模式处理失败:', error)
         pushMessage({ 
           role: "assistant", 
-          content: `正在处理工作区操作: ${parsedCommand.requirement?.action}...`
+          content: `编辑操作失败: ${error instanceof Error ? error.message : String(error)}`
         })
-        
-        try {
-          // 直接调用AI API处理工作区操作，而不是通过workspaceStore
-          const aiResult = await processWorkspaceAiOperation(parsedCommand.requirement!, userText)
-          
-          if (aiResult.success) {
-            pushMessage({ 
-              role: "assistant", 
-              content: `✅ 操作完成！${aiResult.description || ''}`
-            })
-          } else {
-            pushMessage({ 
-              role: "assistant", 
-              content: `❌ 操作失败: ${aiResult.error}`
-            })
-          }
-          return
-        } catch (error) {
-          console.error('[Chatbot] 工作区操作失败:', error)
-          pushMessage({ 
-            role: "assistant", 
-            content: `工作区操作失败: ${error instanceof Error ? error.message : String(error)}`
-          })
-          return
-        } finally {
-          isThinking.value = false
-        }
+        return
       }
-    } catch (error) {
-      console.error('[Chatbot] 工作区操作解析失败:', error)
-      // 继续执行普通聊天流程
     }
   }
   isThinking.value = true;
@@ -813,6 +835,333 @@ async function applyAiResultToEditor(requirement: AiRequirement, aiResult: strin
   return { description }
 }
 
+/**
+ * 处理问答模式
+ */
+async function processChatMode(userText: string) {
+  console.log('[Chatbot] 执行问答模式')
+  
+  isThinking.value = true
+  try {
+    // 调用原有的聊天机器人逻辑
+    await executeOriginalChatLogic(userText)
+  } finally {
+    isThinking.value = false
+  }
+}
+
+/**
+ * 处理选中文本编辑
+ */
+async function processSelectionEdit(userText: string) {
+  console.log('[Chatbot] 执行选中文本编辑')
+  
+  isThinking.value = true
+  pushMessage({ 
+    role: "assistant", 
+    content: "正在编辑选中文本..."
+  })
+  
+  try {
+    // 解析编辑意图
+    const parser = useAiRequirementParser()
+    const parsedCommand = parser.parse(userText)
+    
+    if (parsedCommand.type === 'workspace' && parsedCommand.confidence > 0.3) {
+      const aiResult = await processWorkspaceAiOperation(parsedCommand.requirement!, userText)
+      
+      if (aiResult.success) {
+        pushMessage({ 
+          role: "assistant", 
+          content: `✅ 选中文本编辑完成！${aiResult.description || ''}`
+        })
+      } else {
+        pushMessage({ 
+          role: "assistant", 
+          content: `❌ 编辑失败: ${aiResult.error}`
+        })
+      }
+    } else {
+      pushMessage({ 
+        role: "assistant", 
+        content: "未能理解编辑指令，请尝试更明确的表达，如：'修改这段文字'、'翻译成英文'等"
+      })
+    }
+  } finally {
+    isThinking.value = false
+  }
+}
+
+/**
+ * 处理智能编辑（无选中文本时）
+ */
+async function processSmartEdit(userText: string) {
+  console.log('[Chatbot] 执行智能编辑')
+  
+  isThinking.value = true
+  pushMessage({ 
+    role: "assistant", 
+    content: "正在分析编辑范围..."
+  })
+  
+  try {
+    // 1. 获取当前文档内容
+    const workspaceStore = useWorkspaceStore()
+    const currentDocumentContent = await getCurrentDocumentContent()
+    
+    // 2. 使用小LLM识别操作范围和意图
+    const scopeAnalysis = await analyzeScopeWithSmallLLM(userText, currentDocumentContent)
+    
+    console.log('[Chatbot] 小LLM分析结果:', scopeAnalysis)
+    
+    // 3. 根据分析结果执行操作
+    if (scopeAnalysis.success) {
+      pushMessage({ 
+        role: "assistant", 
+        content: `识别到操作范围: ${scopeAnalysis.scope}，正在执行...`
+      })
+      
+      const editResult = await executeSmartEdit(scopeAnalysis, userText, currentDocumentContent)
+      
+      if (editResult.success) {
+        pushMessage({ 
+          role: "assistant", 
+          content: `✅ ${scopeAnalysis.scope}编辑完成！${editResult.description || ''}`
+        })
+      } else {
+        pushMessage({ 
+          role: "assistant", 
+          content: `❌ 编辑失败: ${editResult.error}`
+        })
+      }
+    } else {
+      pushMessage({ 
+        role: "assistant", 
+        content: `无法识别操作范围: ${scopeAnalysis.error || '请尝试选中特定文本后再操作'}`
+      })
+    }
+  } finally {
+    isThinking.value = false
+  }
+}
+
+/**
+ * 获取当前文档内容
+ */
+async function getCurrentDocumentContent(): Promise<string> {
+  try {
+    // 通过事件获取当前编辑器内容
+    return new Promise((resolve) => {
+      const event = new CustomEvent('get-document-content', {
+        detail: { callback: resolve }
+      })
+      document.dispatchEvent(event)
+      
+      // 超时处理
+      setTimeout(() => resolve(''), 1000)
+    })
+  } catch (error) {
+    console.warn('[Chatbot] 获取文档内容失败:', error)
+    return ''
+  }
+}
+
+/**
+ * 使用小LLM分析操作范围
+ */
+async function analyzeScopeWithSmallLLM(userInput: string, documentContent: string) {
+  try {
+    const prompt = `你是一个文本编辑助手。用户想要编辑一个文档，但没有选中特定文本。请分析用户的意图和操作范围。
+
+用户指令: "${userInput}"
+
+文档内容预览 (前500字符):
+${documentContent.substring(0, 500)}${documentContent.length > 500 ? '...' : ''}
+
+请以JSON格式返回分析结果:
+{
+  "scope": "全文|段落|标题|列表项|具体位置描述",
+  "action": "编辑|格式化|翻译|分析|生成|删除|插入",
+  "confidence": 0.8,
+  "target_content": "如果能识别具体内容则提供，否则为空",
+  "reason": "分析理由"
+}
+
+只返回JSON，不要任何其他文字。`
+
+    const response = await fetch('/api/siliconflow', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        input: prompt,
+        temperature: 0.1,
+        max_tokens: 500
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`小LLM API调用失败: ${response.status}`)
+    }
+
+    const data = await response.json()
+    const aiResponse = data.choices?.[0]?.message?.content || ''
+    
+    console.log('[Chatbot] 小LLM原始响应:', aiResponse)
+    
+    // 解析JSON响应
+    const jsonMatch = aiResponse.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const analysis = JSON.parse(jsonMatch[0])
+      return {
+        success: true,
+        scope: analysis.scope,
+        action: analysis.action,
+        confidence: analysis.confidence,
+        targetContent: analysis.target_content,
+        reason: analysis.reason
+      }
+    } else {
+      throw new Error('小LLM返回格式错误')
+    }
+  } catch (error) {
+    console.error('[Chatbot] 小LLM分析失败:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+/**
+ * 执行智能编辑
+ */
+async function executeSmartEdit(scopeAnalysis: any, userInput: string, documentContent: string) {
+  try {
+    // 构建针对性的编辑提示
+    let editPrompt = userInput
+    
+    if (scopeAnalysis.targetContent) {
+      editPrompt += `\n\n目标内容: ${scopeAnalysis.targetContent}`
+    } else {
+      editPrompt += `\n\n操作范围: ${scopeAnalysis.scope}`
+      editPrompt += `\n\n文档内容:\n${documentContent}`
+    }
+    
+    // 使用大LLM进行实际编辑
+    const aiResponse = await callAiForWorkspace(editPrompt)
+    
+    // 应用编辑结果
+    const event = new CustomEvent('workspace-ai-result', {
+      detail: {
+        action: scopeAnalysis.action,
+        target: scopeAnalysis.scope === '全文' ? 'document' : 'selection',
+        result: aiResponse,
+        originalText: scopeAnalysis.targetContent || '',
+        hasSelection: false,
+        isSmartEdit: true,
+        scope: scopeAnalysis.scope
+      }
+    })
+    
+    document.dispatchEvent(event)
+    
+    return {
+      success: true,
+      description: `已对${scopeAnalysis.scope}进行${scopeAnalysis.action}操作`
+    }
+    
+  } catch (error) {
+    console.error('[Chatbot] 智能编辑执行失败:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+/**
+ * 执行原有聊天逻辑
+ */
+async function executeOriginalChatLogic(userText: string) {
+  try {
+    // Ensure no legacy HTML blobs remain in history before building payload
+    purgeHtmlFromHistory();
+    const endpoint = effectiveApiBaseNormalized.value;
+    console.debug('[chatbot] endpoint=', endpoint, 'model=', selectedModel.value);
+    if (endpoint) {
+      const useResponsesApi = selectedModel.value.startsWith('o3');
+      const chatMessages = buildChatMessages();
+      if (useResponsesApi) {
+        // Responses API expects `input` and `max_output_tokens`
+        const payload: any = {
+          model: apiModel.value,
+          input: buildInputFromMessages(chatMessages),
+          temperature: temperature.value,
+          max_output_tokens: maxTokens.value
+        };
+        const res: any = await $fetch(endpoint, {
+          method: "POST",
+          headers: {
+            // using proxy; server injects Authorization
+            "Content-Type": "application/json"
+          },
+          body: { ...payload, model: selectedModel.value }
+        });
+        const text = sanitizeForDisplay(ensureText(normalizeResponsesOutput(res)));
+        pushMessage({ role: "assistant", content: text });
+      } else {
+        // Chat completions
+        const basePayload: any = {
+          model: apiModel.value,
+          messages: chatMessages,
+          temperature: temperature.value,
+          // For GPT-5, backend will normalize if needed, but we prefer sending correct field
+          ...(selectedModel.value === 'gpt-5'
+            ? { max_completion_tokens: maxTokens.value }
+            : { max_tokens: maxTokens.value })
+        };
+        // If GPT-5 and response_format enabled in config, attach JSON Schema
+        let payload = basePayload;
+        if (
+          selectedModel.value === "gpt-5" &&
+          responseFormatDefault?.enabled &&
+          responseFormatDefault?.schema
+        ) {
+          payload = {
+            ...payload,
+            response_format: {
+              type: "json_schema",
+              json_schema: { strict: true, schema: responseFormatDefault.schema }
+            }
+          };
+        }
+        const res: any = await requestChatCompletions(endpoint, payload);
+        const text = sanitizeForDisplay(ensureText(
+          res?.choices?.[0]?.message?.content ??
+          res?.reply ??
+          (typeof res === "string" ? res : JSON.stringify(res))
+        ));
+        pushMessage({ role: "assistant", content: text });
+      }
+    } else {
+      await new Promise((r) => setTimeout(r, 600));
+      const reply = `You said: "${userText}"\n\n(This is a demo reply. Configure apiBase and API Key to enable real responses.)`;
+      pushMessage({ role: "assistant", content: reply });
+    }
+  } catch (e: any) {
+    const errDetail =
+      e?.data?.error?.detail ||
+      e?.data?.error ||
+      e?.data ||
+      e?.message ||
+      "Request failed.";
+    console.error("[chatbot] request error", errDetail);
+    pushMessage({ role: "assistant", content: ensureText(errDetail) });
+  }
+}
+
 // Utilities to build context
 function buildChatMessages() {
   const base: Array<{ role: string; content: string }> = [
@@ -924,6 +1273,19 @@ onUnmounted(() => {
 
 <style scoped>
 .max-w-4\/5 { max-width: 80%; }
+
+/* 模式切换按钮样式 */
+.mode-btn {
+  @apply px-2 py-1 rounded text-xs transition-all duration-200;
+}
+
+.mode-btn-active {
+  @apply bg-blue-500 text-white;
+}
+
+.mode-btn-inactive {
+  @apply bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500;
+}
 </style>
 
 
