@@ -114,6 +114,11 @@
       <AiEnhancementDemo />
     </div>
     
+    <!-- 全文翻译测试 -->
+    <div class="demo-section bg-white dark:bg-slate-800 p-6 m-6 rounded-xl shadow-lg">
+      <TranslationTestDemo />
+    </div>
+    
     <!-- AI操作功能测试 -->
     <div class="demo-section bg-white dark:bg-slate-800 p-6 m-6 rounded-xl shadow-lg">
       <AiOperationTest />
@@ -127,6 +132,7 @@ import ToolbarScheme2 from '~/components/edit/ToolbarScheme2.vue'
 import ToolbarScheme3 from '~/components/edit/ToolbarScheme3.vue'
 import WorkspaceOperatorDemo from '~/components/shared/WorkspaceOperatorDemo.vue'
 import AiEnhancementDemo from '~/components/shared/AiEnhancementDemo.vue'
+import TranslationTestDemo from '~/components/shared/TranslationTestDemo.vue'
 import AiOperationTest from '~/components/shared/AiOperationTest.vue'
 
 const currentScheme = ref('scheme1')

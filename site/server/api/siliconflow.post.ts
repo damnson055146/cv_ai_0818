@@ -54,9 +54,13 @@ export default defineEventHandler(async (event) => {
       const errorText = await response.text()
       console.error(`[SiliconFlow] API错误:`, response.status, errorText)
       setResponseStatus(event, response.status)
+      
+      // 返回标准的错误响应格式，便于前端识别
       return { 
         error: `SiliconFlow API error: ${response.status}`,
-        details: errorText 
+        details: errorText,
+        statusCode: response.status,
+        isApiError: true
       }
     }
 

@@ -163,6 +163,7 @@ import { useWorkspaceStore } from "~/composables/stores/workspace";
 import { useAiRequirementParser } from "~/composables/aiRequirementParser";
 import type { AiRequirement } from "~/composables/workspaceOperator";
 import { useWorkspaceOperator } from "~/composables/workspaceOperator";
+import { useDocumentStructureParser } from "~/composables/documentStructureParser";
 
 type Role = "user" | "assistant" | "system";
 interface Message {
@@ -905,12 +906,24 @@ async function processSmartEdit(userText: string) {
   })
   
   try {
-    // 1. 获取当前文档内容
+    // 1. 获取当前文档内容和结构
     const workspaceStore = useWorkspaceStore()
     const currentDocumentContent = await getCurrentDocumentContent()
+    const documentStructure = await getCurrentDocumentStructure()
     
-    // 2. 使用小LLM识别操作范围和意图
-    const scopeAnalysis = await analyzeScopeWithSmallLLM(userText, currentDocumentContent)
+    console.log('[Chatbot] 文档结构:', documentStructure)
+    
+    // 2. 优先检查是否是常见的全文操作（避免小LLM解析延迟）
+    const quickAnalysis = quickPatternMatch(userText)
+    let scopeAnalysis
+    
+    if (quickAnalysis.success && (quickAnalysis.confidence || 0) > 0.8) {
+      console.log('[Chatbot] 快速模式匹配成功，跳过小LLM:', quickAnalysis)
+      scopeAnalysis = quickAnalysis
+    } else {
+      // 使用小LLM识别操作范围和意图
+      scopeAnalysis = await analyzeScopeWithSmallLLM(userText, currentDocumentContent)
+    }
     
     console.log('[Chatbot] 小LLM分析结果:', scopeAnalysis)
     
@@ -921,7 +934,7 @@ async function processSmartEdit(userText: string) {
         content: `识别到操作范围: ${scopeAnalysis.scope}，正在执行...`
       })
       
-      const editResult = await executeSmartEdit(scopeAnalysis, userText, currentDocumentContent)
+      const editResult = await executeStructuredSmartEdit(scopeAnalysis, userText, currentDocumentContent, documentStructure)
       
       if (editResult.success) {
         pushMessage({ 
@@ -937,7 +950,7 @@ async function processSmartEdit(userText: string) {
     } else {
       pushMessage({ 
         role: "assistant", 
-        content: `无法识别操作范围: ${scopeAnalysis.error || '请尝试选中特定文本后再操作'}`
+        content: `无法识别操作范围: ${(scopeAnalysis as any).error || '请尝试选中特定文本后再操作'}`
       })
     }
   } finally {
@@ -963,6 +976,26 @@ async function getCurrentDocumentContent(): Promise<string> {
   } catch (error) {
     console.warn('[Chatbot] 获取文档内容失败:', error)
     return ''
+  }
+}
+
+/**
+ * 获取当前文档结构
+ */
+async function getCurrentDocumentStructure(): Promise<any> {
+  try {
+    return new Promise((resolve) => {
+      const event = new CustomEvent('get-document-structure', {
+        detail: { callback: resolve }
+      })
+      document.dispatchEvent(event)
+      
+      // 超时处理
+      setTimeout(() => resolve({ sections: [], totalLines: 0 }), 1000)
+    })
+  } catch (error) {
+    console.warn('[Chatbot] 获取文档结构失败:', error)
+    return { sections: [], totalLines: 0 }
   }
 }
 
@@ -1006,24 +1039,65 @@ ${documentContent.substring(0, 500)}${documentContent.length > 500 ? '...' : ''}
     }
 
     const data = await response.json()
+    
+    // 检查是否是API错误响应
+    if (data.error || data.isApiError) {
+      console.warn('[Chatbot] 硅基流动API错误:', data.error)
+      return useFallbackAnalysis(userInput, documentContent)
+    }
+    
     const aiResponse = data.choices?.[0]?.message?.content || ''
     
     console.log('[Chatbot] 小LLM原始响应:', aiResponse)
     
-    // 解析JSON响应
-    const jsonMatch = aiResponse.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      const analysis = JSON.parse(jsonMatch[0])
-      return {
-        success: true,
-        scope: analysis.scope,
-        action: analysis.action,
-        confidence: analysis.confidence,
-        targetContent: analysis.target_content,
-        reason: analysis.reason
+    // 解析JSON响应 - 更健壮的处理
+    try {
+      // 清理响应内容，移除HTML标记和其他干扰内容
+      let cleanResponse = aiResponse.trim()
+      
+      // 移除HTML内容（如<!DOCTYPE等）
+      if (cleanResponse.includes('<!DOCTYPE') || cleanResponse.includes('<html')) {
+        console.warn('[Chatbot] 检测到HTML响应，可能是API错误，直接使用fallback')
+        return useFallbackAnalysis(userInput, documentContent)
       }
-    } else {
-      throw new Error('小LLM返回格式错误')
+      
+      // 移除markdown代码块标记
+      if (cleanResponse.startsWith('```json')) {
+        cleanResponse = cleanResponse.replace(/```json\s*/, '').replace(/```\s*$/, '')
+      }
+      if (cleanResponse.startsWith('```')) {
+        cleanResponse = cleanResponse.replace(/```\s*/, '').replace(/```\s*$/, '')
+      }
+      
+      // 移除可能的前后缀文字，只提取JSON部分
+      const jsonMatch = cleanResponse.match(/\{[\s\S]*?\}/)
+      if (jsonMatch) {
+        const jsonStr = jsonMatch[0]
+        console.log('[Chatbot] 提取到的JSON字符串:', jsonStr)
+        
+        const analysis = JSON.parse(jsonStr)
+        
+        // 验证JSON格式是否正确
+        if (analysis && typeof analysis === 'object') {
+          return {
+            success: true,
+            scope: analysis.scope || '全文',
+            action: analysis.action || '编辑',
+            confidence: analysis.confidence || 0.8,
+            targetContent: analysis.target_content || '',
+            reason: analysis.reason || '小LLM识别'
+          }
+        } else {
+          throw new Error('解析的JSON格式不正确')
+        }
+      } else {
+        // 如果没有找到JSON，使用fallback分析
+        console.warn('[Chatbot] 未找到JSON格式，使用fallback分析')
+        return useFallbackAnalysis(userInput, documentContent)
+      }
+    } catch (parseError) {
+      console.warn('[Chatbot] JSON解析失败，使用fallback分析:', parseError)
+      return useFallbackAnalysis(userInput, documentContent)
     }
   } catch (error) {
     console.error('[Chatbot] 小LLM分析失败:', error)
@@ -1035,7 +1109,280 @@ ${documentContent.substring(0, 500)}${documentContent.length > 500 ? '...' : ''}
 }
 
 /**
- * 执行智能编辑
+ * 快速模式匹配 - 优先处理常见指令
+ */
+function quickPatternMatch(userInput: string) {
+  const input = userInput.toLowerCase()
+  
+  // 高优先级的全文翻译模式
+  const highPriorityPatterns = [
+    { 
+      patterns: ['翻译全文', '翻译整个文档', '全文翻译', '全部翻译'], 
+      scope: '全文', 
+      action: '翻译', 
+      confidence: 0.95 
+    },
+    { 
+      patterns: ['翻译成中文', '翻译为中文', '中文翻译'], 
+      scope: '全文', 
+      action: '翻译', 
+      confidence: 0.9 
+    },
+    { 
+      patterns: ['翻译成英文', '翻译为英文', '英文翻译'], 
+      scope: '全文', 
+      action: '翻译', 
+      confidence: 0.9 
+    }
+  ]
+  
+  // 查找高优先级匹配
+  for (const pattern of highPriorityPatterns) {
+    for (const p of pattern.patterns) {
+      if (input.includes(p)) {
+        console.log(`[Chatbot] 快速匹配成功: ${p} -> ${pattern.scope}`)
+        return {
+          success: true,
+          scope: pattern.scope,
+          action: pattern.action,
+          confidence: pattern.confidence,
+          targetContent: '',
+          reason: `快速匹配: ${p}`
+        }
+      }
+    }
+  }
+  
+  return { success: false }
+}
+
+/**
+ * Fallback分析器 - 当小LLM失败时使用规则引擎
+ */
+function useFallbackAnalysis(userInput: string, documentContent: string) {
+  const input = userInput.toLowerCase()
+  
+  // 预定义的编辑模式
+  const editPatterns = [
+    { 
+      patterns: ['翻译全文', '翻译整个文档', '翻译成中文', '翻译为中文', 'translate to chinese', '中文翻译', '全文翻译', '全部翻译'], 
+      scope: '全文', 
+      action: '翻译', 
+      confidence: 0.95 
+    },
+    { 
+      patterns: ['翻译成英文', '翻译为英文', 'translate to english', '英文翻译', 'translate all', 'translate entire'], 
+      scope: '全文', 
+      action: '翻译', 
+      confidence: 0.95 
+    },
+    { 
+      patterns: ['整篇', '全文', '整个文档', 'whole document', 'entire document', '全部内容', '所有内容'], 
+      scope: '全文', 
+      action: '编辑', 
+      confidence: 0.9 
+    },
+    { 
+      patterns: ['标题', 'heading', 'title', 'h1', 'h2', 'h3', '所有标题', '全部标题'], 
+      scope: '标题', 
+      action: '编辑', 
+      confidence: 0.8 
+    },
+    { 
+      patterns: ['段落', 'paragraph', '这段', '这一段'], 
+      scope: '段落', 
+      action: '编辑', 
+      confidence: 0.7 
+    },
+    { 
+      patterns: ['列表', 'list', '清单', '所有列表'], 
+      scope: '列表项', 
+      action: '编辑', 
+      confidence: 0.7 
+    },
+    { 
+      patterns: ['实习', 'internship', '实习经验', '实习经历', '所有实习'], 
+      scope: '实习', 
+      action: '编辑', 
+      confidence: 0.8 
+    },
+    { 
+      patterns: ['项目', 'project', '项目经验', '项目经历', '所有项目'], 
+      scope: '项目', 
+      action: '编辑', 
+      confidence: 0.8 
+    },
+    { 
+      patterns: ['格式化', 'format', '排版'], 
+      scope: '全文', 
+      action: '格式化', 
+      confidence: 0.8 
+    },
+    { 
+      patterns: ['润色', '优化', 'polish', 'improve', '改进'], 
+      scope: '全文', 
+      action: '编辑', 
+      confidence: 0.7 
+    }
+  ]
+  
+  // 查找匹配的模式
+  for (const pattern of editPatterns) {
+    for (const p of pattern.patterns) {
+      if (input.includes(p)) {
+        console.log(`[Chatbot] Fallback匹配模式: ${p} -> ${pattern.scope}`)
+        return {
+          success: true,
+          scope: pattern.scope,
+          action: pattern.action,
+          confidence: pattern.confidence,
+          targetContent: '',
+          reason: `关键词匹配: ${p}`
+        }
+      }
+    }
+  }
+  
+  // 默认全文编辑
+  return {
+    success: true,
+    scope: '全文',
+    action: '编辑',
+    confidence: 0.5,
+    targetContent: '',
+    reason: '默认全文编辑'
+  }
+}
+
+/**
+ * 执行结构化智能编辑（使用文档结构）
+ */
+async function executeStructuredSmartEdit(scopeAnalysis: any, userInput: string, documentContent: string, documentStructure: any) {
+  try {
+    console.log('[Chatbot] 开始结构化智能编辑:', scopeAnalysis.scope)
+    
+    // 特殊处理：全文翻译等全文操作
+    if (scopeAnalysis.scope === '全文' || scopeAnalysis.action === '翻译') {
+      return await executeFullDocumentEdit(scopeAnalysis, userInput, documentContent)
+    }
+    
+    // 根据文档结构查找目标sections
+    const { findSectionsByScope } = useDocumentStructureParser()
+    const targetSections = findSectionsByScope(documentStructure, scopeAnalysis.scope)
+    
+    console.log('[Chatbot] 找到目标sections:', targetSections.length)
+    
+    if (targetSections.length === 0) {
+      return {
+        success: false,
+        error: `未找到匹配的${scopeAnalysis.scope}内容`
+      }
+    }
+    
+    // 分段处理编辑
+    const editPromises = targetSections.map(async (section: any, index: number) => {
+      console.log(`[Chatbot] 处理section ${index + 1}/${targetSections.length}: ${section.title}`)
+      
+      let sectionPrompt = `${userInput}\n\n目标内容类型: ${section.type}\n内容:\n${section.content}`
+      
+      if (section.type === 'internship') {
+        sectionPrompt += '\n\n注意：这是实习经验条目，请保持原有的markdown格式（以"- "开头）'
+      } else if (section.type === 'heading') {
+        sectionPrompt += `\n\n注意：这是${section.level}级标题，请保持markdown标题格式`
+      }
+      
+      const result = await callAiForWorkspace(sectionPrompt)
+      return {
+        section,
+        result,
+        index
+      }
+    })
+    
+    const editResults = await Promise.all(editPromises)
+    
+    // 应用所有编辑结果
+    for (const { section, result } of editResults) {
+      const event = new CustomEvent('workspace-ai-result', {
+        detail: {
+          action: scopeAnalysis.action,
+          target: 'section',
+          result: result,
+          originalText: section.content,
+          hasSelection: false,
+          isStructuredEdit: true,
+          section: section,
+          scope: scopeAnalysis.scope
+        }
+      })
+      
+      document.dispatchEvent(event)
+      
+      // 短暂延迟以确保编辑顺序
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    
+    return {
+      success: true,
+      description: `已处理${editResults.length}个${scopeAnalysis.scope}区域`
+    }
+    
+  } catch (error) {
+    console.error('[Chatbot] 结构化智能编辑失败:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+/**
+ * 执行全文编辑
+ */
+async function executeFullDocumentEdit(scopeAnalysis: any, userInput: string, documentContent: string) {
+  try {
+    console.log('[Chatbot] 执行全文编辑')
+    
+    let editPrompt = userInput
+    if (scopeAnalysis.action === '翻译') {
+      editPrompt += `\n\n请翻译以下全部内容，保持原有的markdown格式：\n\n${documentContent}`
+    } else {
+      editPrompt += `\n\n文档内容:\n${documentContent}`
+    }
+    
+    const aiResponse = await callAiForWorkspace(editPrompt)
+    
+    // 应用全文编辑结果
+    const event = new CustomEvent('workspace-ai-result', {
+      detail: {
+        action: scopeAnalysis.action,
+        target: 'document',
+        result: aiResponse,
+        originalText: documentContent,
+        hasSelection: false,
+        isStructuredEdit: true,
+        scope: '全文'
+      }
+    })
+    
+    document.dispatchEvent(event)
+    
+    return {
+      success: true,
+      description: '全文编辑完成'
+    }
+    
+  } catch (error) {
+    console.error('[Chatbot] 全文编辑失败:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+/**
+ * 执行智能编辑（原始版本，保留作为fallback）
  */
 async function executeSmartEdit(scopeAnalysis: any, userInput: string, documentContent: string) {
   try {

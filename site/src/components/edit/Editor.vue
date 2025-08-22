@@ -92,6 +92,7 @@ import type * as Monaco from "monaco-editor";
 import * as tabs from "@zag-js/tabs";
 import { useWorkspaceStore } from "~/composables/stores/workspace";
 import { useWorkspaceOperator } from "~/composables/workspaceOperator";
+import { useDocumentStructureParser } from "~/composables/documentStructureParser";
 import { normalizeProps, useMachine } from "@zag-js/vue";
 // import { isClient } from "@renovamen/utils";
 const isClient = typeof window !== "undefined";
@@ -295,10 +296,12 @@ const initializeWorkspaceIntegration = () => {
   
   // 监听AI操作结果事件
   const handleAiResult = (event: any) => {
-    const { action, target, result, originalText, hasSelection, isSmartEdit, scope } = event.detail;
-    console.log('[Editor] 收到AI操作结果:', { action, target, resultLength: result?.length, isSmartEdit });
+    const { action, target, result, originalText, hasSelection, isSmartEdit, isStructuredEdit, section, scope } = event.detail;
+    console.log('[Editor] 收到AI操作结果:', { action, target, resultLength: result?.length, isSmartEdit, isStructuredEdit });
     
-    if (isSmartEdit) {
+    if (isStructuredEdit) {
+      applyStructuredEditToMonaco(action, target, result, originalText, section, scope);
+    } else if (isSmartEdit) {
       applySmartEditToMonaco(action, scope, result, originalText);
     } else {
       applyAiResultToMonaco(action, target, result, originalText, hasSelection);
@@ -315,13 +318,29 @@ const initializeWorkspaceIntegration = () => {
     }
   };
   
+  // 监听获取文档结构事件
+  const handleGetDocumentStructure = (event: any) => {
+    const { callback } = event.detail;
+    if (editor && callback) {
+      const model = editor.editor.getModel();
+      if (model) {
+        const content = model.getValue();
+        const { parseDocumentStructure } = useDocumentStructureParser();
+        const structure = parseDocumentStructure(content);
+        callback(structure);
+      }
+    }
+  };
+  
   document.addEventListener('workspace-ai-result', handleAiResult);
   document.addEventListener('get-document-content', handleGetDocumentContent);
+  document.addEventListener('get-document-structure', handleGetDocumentStructure);
   
   // 清理事件监听器
   onBeforeUnmount(() => {
     document.removeEventListener('workspace-ai-result', handleAiResult);
     document.removeEventListener('get-document-content', handleGetDocumentContent);
+    document.removeEventListener('get-document-structure', handleGetDocumentStructure);
   });
 };
 
@@ -602,6 +621,109 @@ const addResultToDocumentEnd = (result: string, label: string) => {
   
   ed.executeEdits('ai-smart-edit-append', [editOperation]);
   console.log(`[Editor] ✅ 已在文档末尾添加${label}`);
+};
+
+/**
+ * 应用结构化编辑到Monaco编辑器
+ */
+const applyStructuredEditToMonaco = (action: string, target: string, result: string, originalText: string, section: any, scope: string) => {
+  if (!editor) {
+    console.warn('[Editor] Monaco编辑器未初始化，无法应用结构化编辑结果');
+    return;
+  }
+  
+  const ed = editor.editor;
+  const model = ed.getModel();
+  
+  if (!model) {
+    console.warn('[Editor] Monaco模型未找到');
+    return;
+  }
+  
+  try {
+    console.log(`[Editor] 应用结构化编辑到Monaco: ${action} - ${target}`, { 
+      resultLength: result?.length, 
+      sectionType: section?.type,
+      scope 
+    });
+    
+    if (target === 'document') {
+      // 全文替换
+      const fullRange = {
+        startLineNumber: 1,
+        startColumn: 1,
+        endLineNumber: model.getLineCount(),
+        endColumn: model.getLineMaxColumn(model.getLineCount())
+      };
+      
+      const editOperation = {
+        range: fullRange,
+        text: result,
+        forceMoveMarkers: true
+      };
+      
+      ed.executeEdits('ai-structured-edit-full', [editOperation]);
+      ed.setPosition({ lineNumber: 1, column: 1 });
+      
+      console.log('[Editor] ✅ 已完成全文结构化编辑');
+      
+    } else if (target === 'section' && section) {
+      // Section范围替换
+      const { getSectionRange } = useDocumentStructureParser();
+      const sectionRange = getSectionRange(section);
+      
+      console.log(`[Editor] 替换section范围:`, sectionRange);
+      
+      const editOperation = {
+        range: sectionRange,
+        text: result,
+        forceMoveMarkers: true
+      };
+      
+      ed.executeEdits(`ai-structured-edit-section-${section.type}`, [editOperation]);
+      
+      // 选中编辑后的内容
+      const resultLines = result.split('\n').length;
+      const newEndLine = sectionRange.startLineNumber + resultLines - 1;
+      const newEndColumn = result.split('\n')[resultLines - 1].length + 1;
+      
+      ed.setSelection({
+        startLineNumber: sectionRange.startLineNumber,
+        startColumn: sectionRange.startColumn,
+        endLineNumber: newEndLine,
+        endColumn: newEndColumn
+      });
+      
+      console.log(`[Editor] ✅ 已完成${section.type} section编辑`);
+      
+    } else {
+      // 默认处理：在当前位置插入
+      const position = ed.getPosition();
+      if (position) {
+        const editOperation = {
+          range: {
+            startLineNumber: position.lineNumber,
+            startColumn: position.column,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column
+          },
+          text: result,
+          forceMoveMarkers: true
+        };
+        
+        ed.executeEdits('ai-structured-edit-insert', [editOperation]);
+        console.log('[Editor] ✅ 已在当前位置插入结构化编辑结果');
+      } else {
+        addResultToDocumentEnd(result, `结构化编辑结果 (${scope})`);
+      }
+    }
+    
+    // 聚焦编辑器
+    ed.focus();
+    
+  } catch (error) {
+    console.error('[Editor] 应用结构化编辑结果失败:', error);
+  }
 };
 
 // Markdown operations
