@@ -48,6 +48,21 @@ export class UpdateManager {
       versionId: 'live',
       timestamp: now
     })
+
+    // also create a version for direct edit
+    const version = await this.versionMgr.createVersion({
+      documentId,
+      content: newContent,
+      operationType: 'direct_edit',
+      operationSource: 'user',
+      operationDescription: 'direct edit',
+      charactersAdded: op.charactersAdded,
+      charactersRemoved: op.charactersRemoved
+    })
+    // notify same-tab listeners
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('cv_doc_versions_updated', { detail: { documentId } }))
+    }
   }
 
   // Chatbot path with prior intent parsing (Parser -> Chatbot -> UpdateMgr)
@@ -84,6 +99,20 @@ export class UpdateManager {
       versionId: 'live',
       timestamp: now
     })
+
+    // also create a version for chatbot edit
+    const version = await this.versionMgr.createVersion({
+      documentId,
+      content: appliedContent,
+      operationType: 'chatbot_edit',
+      operationSource: 'chatbot',
+      operationDescription: 'chatbot edit',
+      charactersAdded: op.charactersAdded,
+      charactersRemoved: op.charactersRemoved
+    })
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('cv_doc_versions_updated', { detail: { documentId } }))
+    }
   }
 
   // Save path (Editor -> UpdateMgr)
@@ -118,6 +147,9 @@ export class UpdateManager {
       operationCount: (latestState?.operationCount ?? 0) + 1
     }
     await this.storage.saveDocumentState(state)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('cv_doc_versions_updated', { detail: { documentId } }))
+    }
   }
 }
 

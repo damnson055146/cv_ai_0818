@@ -5,11 +5,13 @@
     <ToastList />
     <ClientOnly>
       <Chatbot />
+      <VersionHistoryWidget />
     </ClientOnly>
   </div>
 </template>
 
 <script setup lang="ts">
+import VersionHistoryWidget from '~/components/shared/VersionHistoryWidget.vue'
 const { t, locale } = useI18n();
 const colorMode = useColorMode();
 const preferredDark = { value: false }; //usePreferredDark();

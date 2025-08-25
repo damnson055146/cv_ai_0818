@@ -112,6 +112,8 @@ const useShortcuts = (keys: string, cb: () => void) => {
   return () => document.removeEventListener('keydown', handleKeydown);
 };
 import AiToolbar from "~/components/edit/toolbar/AiToolbar.vue";
+import { UpdateManager } from "~/data/updateManager";
+import { VersionManager } from "~/data/versionManager";
 
 const props = defineProps<{
   leftSidebarComponent?: any;
@@ -132,6 +134,10 @@ let editor:
       dispose: () => void;
     }
   | undefined;
+
+// Versioning managers
+const updateMgr = new UpdateManager();
+const versionMgr = new VersionManager();
 
 // TODO: [工作区事件监听] 当前Monaco编辑器事件监听
 // 当前功能: 基础的光标和内容变化监听，用于侧边栏状态更新
@@ -154,6 +160,26 @@ onMounted(async () => {
     });
     ed.onDidChangeModelContent(() => refreshSidebarState());
     refreshSidebarState();
+
+    // Direct edit → debounce to append version
+    let directTimer: any = null;
+    let prevContent = ed.getModel()?.getValue() || "";
+    ed.onDidChangeModelContent(() => {
+      const model = ed.getModel();
+      if (!model) return;
+      const current = model.getValue();
+      if (directTimer) clearTimeout(directTimer);
+      directTimer = setTimeout(async () => {
+        const id = (useDataStore().data.curResumeId as any) || "";
+        if (!id) return;
+        try {
+          await updateMgr.handleDirectEdit(String(id), current, prevContent);
+          prevContent = current;
+        } catch (e) {
+          console.warn('[Editor] direct edit version failed', e);
+        }
+      }, 1500);
+    });
     
     // 初始化工作区集成
     initializeWorkspaceIntegration();
