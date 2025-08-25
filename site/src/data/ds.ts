@@ -254,7 +254,7 @@ export interface DocumentTypeConfig {
  * 文档模板记录 - 扁平化设计
  */
 export interface DocumentTemplateRecord {
-    id: string
+  id: string
   name: string
   documentType: 'cv' | 'letter' | 'ps'
   language: 'zh-cn' | 'en' | 'sp'
@@ -268,8 +268,8 @@ export interface DocumentTemplateRecord {
   useCount: number
   rating: number // 0-5星评分
   tags: string[]
-    description: string
-  }
+  description: string
+}
 
 /**
  * 用户表 - 扁平化设计

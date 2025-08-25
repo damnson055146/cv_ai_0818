@@ -138,6 +138,22 @@ export class FlatStorageManager {
   }
 
   /**
+   * 意图解析记录 - append-only
+   */
+  async appendIntentRecord(documentId: string, record: IntentParseRecord): Promise<void> {
+    const key = `${this.keys.INTENT_RECORDS}_${documentId}`
+    const raw = (await this.loadFromLocalStorage<IntentParseRecord[]>(key)) || []
+    raw.push(record)
+    await this.saveToLocalStorage(key, raw)
+  }
+
+  async loadIntentRecords(documentId: string): Promise<IntentParseRecord[]> {
+    const key = `${this.keys.INTENT_RECORDS}_${documentId}`
+    const raw = (await this.loadFromLocalStorage<IntentParseRecord[]>(key)) || []
+    return raw
+  }
+
+  /**
    * 文档状态管理 - append-only
    */
   async saveDocumentState(state: DocumentState): Promise<void> {
