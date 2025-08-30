@@ -114,6 +114,8 @@ const useShortcuts = (keys: string, cb: () => void) => {
 import AiToolbar from "~/components/edit/toolbar/AiToolbar.vue";
 import { UpdateManager } from "~/data/updateManager";
 import { VersionManager } from "~/data/versionManager";
+import { ref, onMounted, onBeforeUnmount, watch, computed, reactive } from "vue";
+import type { useDataStore } from "~/composables";
 
 const props = defineProps<{
   leftSidebarComponent?: any;

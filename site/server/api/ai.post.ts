@@ -26,6 +26,38 @@ export default defineEventHandler(async (event) => {
 
   // Normalize payload per target API and model quirks
   const payload: any = { ...body, model };
+  // Normalize any invalid reasoning effort values early to avoid 400s upstream
+  try {
+    const allowedEfforts = ['low', 'medium', 'high'];
+    const alias: Record<string, string> = { minimal: 'low', default: 'medium', deep: 'high' };
+    // responses API expects `reasoning: { effort }`
+    if (payload?.reasoning && typeof payload.reasoning.effort === 'string') {
+      const incoming = String(payload.reasoning.effort).toLowerCase();
+      const effort = allowedEfforts.includes(incoming) ? incoming : (alias[incoming] || 'medium');
+      if (payload.reasoning.effort !== effort) {
+        payload.reasoning.effort = effort;
+      }
+    }
+    // Some clients may mistakenly send `reasoning_effort` (GPT‑5 style)
+    if (typeof payload?.reasoning_effort === 'string') {
+      const incoming = String(payload.reasoning_effort).toLowerCase();
+      const effort = allowedEfforts.includes(incoming) ? incoming : (alias[incoming] || 'medium');
+      payload.reasoning = payload.reasoning || {};
+      payload.reasoning.effort = effort;
+      delete payload.reasoning_effort;
+    }
+  } catch {}
+  // Debug log sanitized payload intent
+  try {
+    const effort = payload?.reasoning?.effort;
+    console.log('[api/ai] Forwarding request', {
+      model,
+      useResponsesApi,
+      hasReasoning: !!payload?.reasoning,
+      effort
+    });
+  } catch {}
+
   if (useResponsesApi) {
     // responses API uses `input` and `max_output_tokens`
     if (!payload.input && Array.isArray(payload.messages)) {

@@ -235,6 +235,18 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   
   // 导出操作历史
   const exportOperationHistory = () => {
+    // 安全的日期转换函数
+    const safeToISOString = (timestamp: number | undefined): string | null => {
+      if (!timestamp || isNaN(timestamp)) return null
+      try {
+        const date = new Date(timestamp)
+        if (isNaN(date.getTime())) return null
+        return date.toISOString()
+      } catch {
+        return null
+      }
+    }
+
     const data = {
       exportTime: new Date().toISOString(),
       operations: state.recentOperations.map(op => ({
@@ -242,9 +254,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         type: op.type,
         description: op.description,
         status: op.status,
-        createdAt: new Date(op.createdAt).toISOString(),
-        startedAt: op.startedAt ? new Date(op.startedAt).toISOString() : null,
-        completedAt: op.completedAt ? new Date(op.completedAt).toISOString() : null,
+        createdAt: safeToISOString(op.createdAt) || new Date().toISOString(),
+        startedAt: safeToISOString(op.startedAt),
+        completedAt: safeToISOString(op.completedAt),
         duration: op.startedAt && op.completedAt ? op.completedAt - op.startedAt : null,
         error: op.error
       }))

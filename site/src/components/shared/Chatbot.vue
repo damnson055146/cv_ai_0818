@@ -214,7 +214,7 @@ if (selectedModel.value === 'gpt-4.1') selectedModel.value = defaultModel;
 const currentModel = computed(() => modelOptions.find((m) => m.id === selectedModel.value));
 const generalSpec = computed(() => currentModel.value?.general ?? { temperature: { min: 0, max: 2, step: 0.1, default: 1 }, max_tokens: { min: 16, max: 32768, step: 16, default: 2048 } });
 const apiModel = computed(() => currentModel.value?.apiModel || selectedModel.value);
-const gpt5Spec = computed(() => (modelOptions.find((m) => m.id === "gpt-5")?.specific ?? { verbosity: { options: ["low", "medium", "high"] }, reasoning_effort: { options: ["minimal", "default", "deep"] } }));
+const gpt5Spec = computed(() => (modelOptions.find((m) => m.id === "gpt-5")?.specific ?? { verbosity: { options: ["low", "medium", "high"], default: "medium" }, reasoning_effort: { options: ["low", "medium", "high"], default: "medium" } }));
 
 // Prefer global apiBase (proxy) when configured; else fallback to model's endpoint
 const effectiveApiBase = computed(() => globalApiBase || currentModel.value?.apiBase || "");
@@ -255,7 +255,12 @@ if (typeof window !== "undefined") {
 }
 
 const verbosity = useLocalStorage<string>("chatbot.gpt5.verbosity", gpt5Spec.value.verbosity.default ?? "medium");
-const reasoningEffort = useLocalStorage<string>("chatbot.gpt5.reasoning_effort", gpt5Spec.value.reasoning_effort.default ?? "default");
+const reasoningEffort = useLocalStorage<string>("chatbot.gpt5.reasoning_effort", gpt5Spec.value.reasoning_effort.default ?? "medium");
+
+// 清理无效的缓存值
+if (!["low", "medium", "high"].includes(reasoningEffort.value)) {
+  reasoningEffort.value = "medium";
+}
 
 // Bubble position state
 const bubbleX = ref(0);
@@ -682,8 +687,9 @@ async function processWorkspaceAiOperation(requirement: AiRequirement, originalI
       ? workspaceStore.state.currentSelection.text 
       : ''
     
-    // 3. 构建AI提示
+    // 3. 构建AI提示（将选中文本明确包含在prompt中，便于后端检查）
     const aiPrompt = buildWorkspaceAiPrompt(requirement, selectedText, originalInput)
+      + (selectedText ? `\n\n[选中文本]\n${selectedText}\n[/选中文本]` : '')
     
     // 4. 调用AI API (复用现有的聊天机器人AI调用逻辑)
     const aiResponse = await callAiForWorkspace(aiPrompt)
@@ -883,10 +889,27 @@ async function processSelectionEdit(userText: string) {
         })
       }
     } else {
-      pushMessage({ 
-        role: "assistant", 
-        content: "未能理解编辑指令，请尝试更明确的表达，如：'修改这段文字'、'翻译成英文'等"
-      })
+      // 兜底：直接把原话当作编辑指令作用于选区
+      try {
+        const fallbackReq = { action: 'edit', target: 'selection', parameters: {}, prompt: userText }
+        const aiResult = await processWorkspaceAiOperation(fallbackReq as any, userText)
+        if (aiResult.success) {
+          pushMessage({ 
+            role: "assistant", 
+            content: "未精确识别，但已按你的原话完成选区编辑。"
+          })
+        } else {
+          pushMessage({ 
+            role: "assistant", 
+            content: `❌ 编辑失败: ${aiResult.error}`
+          })
+        }
+      } catch (e) {
+        pushMessage({ 
+          role: "assistant", 
+          content: `❌ 编辑失败: ${(e as Error).message}`
+        })
+      }
     }
   } finally {
     isThinking.value = false
@@ -948,10 +971,27 @@ async function processSmartEdit(userText: string) {
         })
       }
     } else {
-      pushMessage({ 
-        role: "assistant", 
-        content: `无法识别操作范围: ${(scopeAnalysis as any).error || '请尝试选中特定文本后再操作'}`
-      })
+      // 兜底：无法识别范围时，直接将原话按全文编辑执行
+      try {
+        const fallbackReq = { action: 'edit', target: 'document', parameters: {}, prompt: userInput }
+        const aiResult = await processWorkspaceAiOperation(fallbackReq as any, userInput)
+        if (aiResult.success) {
+          pushMessage({ 
+            role: "assistant", 
+            content: "未能确定范围，已按你的原话对全文执行编辑。"
+          })
+        } else {
+          pushMessage({ 
+            role: "assistant", 
+            content: `❌ 编辑失败: ${aiResult.error}`
+          })
+        }
+      } catch (e) {
+        pushMessage({ 
+          role: "assistant", 
+          content: `❌ 编辑失败: ${(e as Error).message}`
+        })
+      }
     }
   } finally {
     isThinking.value = false
@@ -1038,6 +1078,13 @@ ${documentContent.substring(0, 500)}${documentContent.length > 500 ? '...' : ''}
       throw new Error(`小LLM API调用失败: ${response.status}`)
     }
 
+    // 如果不是 JSON，直接 fallback
+    const ct = response.headers.get('content-type') || ''
+    if (!/application\/json/i.test(ct)) {
+      const text = await response.text()
+      console.warn('[Chatbot] 小LLM返回非JSON，启用fallback。content-type=', ct, 'snippet=', (text || '').slice(0, 120))
+      return useFallbackAnalysis(userInput, documentContent)
+    }
     const data = await response.json()
     
     // 检查是否是API错误响应
@@ -1100,11 +1147,8 @@ ${documentContent.substring(0, 500)}${documentContent.length > 500 ? '...' : ''}
       return useFallbackAnalysis(userInput, documentContent)
     }
   } catch (error) {
-    console.error('[Chatbot] 小LLM分析失败:', error)
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : String(error)
-    }
+    console.error('[Chatbot] 小LLM分析失败，回退到规则引擎:', error)
+    return useFallbackAnalysis(userInput, documentContent)
   }
 }
 

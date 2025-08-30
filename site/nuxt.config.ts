@@ -38,7 +38,15 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     openaiApiKey: process.env.OPENAI_API_KEY || "",
+    // SiliconFlow server-side key (preferred: server-only)
+    siliconFlowApiKey: process.env.SILICON_FLOW_API_KEY || "",
     public: {
+      // SiliconFlow client-visible helpers (no secrets)
+      // Lowercase keys are what server reads: config.public.siliconFlowBaseUrl / siliconFlowModel
+      siliconFlowBaseUrl: process.env.SILICON_FLOW_BASE_URL || "https://api.siliconflow.cn/v1",
+      siliconFlowModel: process.env.SILICON_FLOW_MODEL || "Qwen/Qwen2.5-7B-Instruct",
+      // Back-compat: some code checks config.public.SILICON_FLOW_API_KEY
+      SILICON_FLOW_API_KEY: process.env.SILICON_FLOW_API_KEY || "",
       googleFontsKey: "",
       chatbot: {
         provider: "openai", // control in config file
@@ -72,7 +80,7 @@ export default defineNuxtConfig({
             },
             specific: {
               verbosity: { type: "enum", options: ["low", "medium", "high"], default: "medium" },
-              reasoning_effort: { type: "enum", options: ["minimal", "default", "deep"], default: "default" }
+              reasoning_effort: { type: "enum", options: ["low", "medium", "high"], default: "medium" }
             }
           },
           {

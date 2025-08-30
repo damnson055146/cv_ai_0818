@@ -14,6 +14,13 @@ services:
       - NUXT_PUBLIC_SITE_URL=http://localhost:3000
       - NUXT_APP_BASE_URL=/
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # SiliconFlow runtime config (server key and public helpers)
+      - SILICON_FLOW_API_KEY=${SILICON_FLOW_API_KEY:-}
+      - SILICON_FLOW_BASE_URL=${SILICON_FLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      - SILICON_FLOW_MODEL=${SILICON_FLOW_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      # (Optional) expose also as public for back-compat if some client code checks it
+      - NUXT_PUBLIC_SILICON_FLOW_BASE_URL=${SILICON_FLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      - NUXT_PUBLIC_SILICON_FLOW_MODEL=${SILICON_FLOW_MODEL:-Qwen/Qwen2.5-7B-Instruct}
       - NUXT_PUBLIC_GOOGLE_FONTS_KEY=${NUXT_PUBLIC_GOOGLE_FONTS_KEY:-}
     restart: unless-stopped
     networks:

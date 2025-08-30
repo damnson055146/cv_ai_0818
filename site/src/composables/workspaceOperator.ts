@@ -591,7 +591,7 @@ class WorkspaceOperator {
     try {
       const { action, prompt, selectedText, context, text, target } = params
       
-      // 构建API请求体
+      // 构建API请求体（显式包含选中文本，便于后端检查）
       let apiPrompt = prompt
       
       // 根据操作类型构建不同的提示格式
@@ -606,8 +606,13 @@ class WorkspaceOperator {
       const body = {
         model: 'o3',
         input: apiPrompt,
-        reasoning: { effort: 'default' },
-        max_output_tokens: 2048
+        reasoning: { effort: 'medium' },
+        max_output_tokens: 2048,
+        meta: {
+          target,
+          hasSelection: !!selectedText,
+          selectedPreview: selectedText?.slice(0, 120) || ''
+        }
       }
       
       // 使用现有的API端点

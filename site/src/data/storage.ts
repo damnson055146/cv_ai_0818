@@ -16,6 +16,8 @@ import type {
   UserPreferenceRecord,
   DocumentTemplateRecord,
   DocumentTypeConfig,
+  ParagraphKeywordRecord,
+  KeywordDictionaryRecord,
   StorageKeys,
   StorageConfig
 } from './ds'
@@ -464,6 +466,64 @@ export class FlatStorageManager {
         commonKeywords: ['research', 'academic', 'goals', 'passion', 'contribution']
       }
     ]
+  }
+
+  /**
+   * 段落关键词索引（Append-Only）
+   */
+  async appendParagraphKeywordRecord(record: ParagraphKeywordRecord): Promise<void> {
+    const key = `cv_para_keywords_${record.documentId}`
+    const raw = (await this.loadFromLocalStorage<ParagraphKeywordRecord[]>(key)) || []
+    raw.push(record)
+    await this.saveToLocalStorage(key, raw)
+  }
+
+  async loadParagraphKeywordRecords(documentId: string): Promise<ParagraphKeywordRecord[]> {
+    const key = `cv_para_keywords_${documentId}`
+    return (await this.loadFromLocalStorage<ParagraphKeywordRecord[]>(key)) || []
+  }
+
+  /**
+   * 关键词字典（全量快照，append-only 保存版本）
+   */
+  async saveKeywordDictionaries(docType: 'cv' | 'letter' | 'ps', language: 'zh-cn' | 'en' | 'sp', dict: KeywordDictionaryRecord): Promise<void> {
+    const key = `cv_kw_dict_${docType}_${language}`
+    const raw = (await this.loadFromLocalStorage<any[]>(key)) || []
+    raw.push(dict)
+    await this.saveToLocalStorage(key, raw)
+  }
+
+  async loadKeywordDictionaries(docType: 'cv' | 'letter' | 'ps', language: 'zh-cn' | 'en' | 'sp'): Promise<KeywordDictionaryRecord> {
+    const key = `cv_kw_dict_${docType}_${language}`
+    const raw = (await this.loadFromLocalStorage<KeywordDictionaryRecord[] | null>(key)) || null
+    if (raw && raw.length) return raw[raw.length - 1]
+    return this.getDefaultKeywordDictionary(docType, language)
+  }
+
+  private getDefaultKeywordDictionary(docType: 'cv' | 'letter' | 'ps', language: 'zh-cn' | 'en' | 'sp'): KeywordDictionaryRecord {
+    const commonEn = {
+      actionVerbs: ['led','owned','built','designed','implemented','optimized','improved','developed','architected','delivered'],
+      domainTerms: ['project','system','pipeline','model','dataset','service','frontend','backend','database'],
+      softSkills: ['communication','leadership','collaboration','problem-solving','initiative'],
+      academicTerms: ['research','paper','publication','methodology','experiment','hypothesis','thesis']
+    }
+    const commonZh = {
+      actionVerbs: ['主导','负责','搭建','设计','实现','优化','改进','研发','架构','交付'],
+      domainTerms: ['项目','系统','流水线','模型','数据集','服务','前端','后端','数据库'],
+      softSkills: ['沟通','领导力','合作','解决问题','主动性'],
+      academicTerms: ['研究','论文','发表','方法','实验','假设','课题']
+    }
+    const base = language === 'en' ? commonEn : commonZh
+    return {
+      id: `kwdict_${docType}_${language}`,
+      docType,
+      language,
+      actionVerbs: base.actionVerbs,
+      domainTerms: base.domainTerms,
+      softSkills: base.softSkills,
+      academicTerms: base.academicTerms,
+      updatedAt: Date.now()
+    }
   }
   /**
    * 基础的LocalStorage操作 - 明文存储，便于调试

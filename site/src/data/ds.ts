@@ -169,7 +169,7 @@ export interface IntentParseRecord {
   userInput: string
   userInputLength: number
   userInputEncoding: 'utf-8'
-  intentType: 'modify' | 'insert' | 'delete' | 'query' | 'format'
+  intentType: 'modify' | 'insert' | 'delete' | 'query' | 'format' | 'translate'
   targetType: 'paragraph' | 'sentence' | 'document'
   targetId?: string
   targetIndex?: number
@@ -180,6 +180,9 @@ export interface IntentParseRecord {
   aiPrompt: string
   aiPromptLength: number
   parseTimeMs: number
+  // 新增CV分块支持
+  sectionTag?: 'basic_info' | 'education' | 'work' | 'projects' | 'skills' | 'awards' | 'certs' | 'summary' | 'other'
+  targetIds?: string[] // 支持多目标ID
 }
 
 /**
@@ -350,4 +353,97 @@ export interface UserPreferenceRecord {
   updatedAt: number
 }
 
+/**
+ * CV分块定位结果
+ */
+export interface CVSectionLocation {
+  sectionTag: 'basic_info' | 'education' | 'work' | 'projects' | 'skills' | 'awards' | 'certs' | 'summary' | 'other'
+  targetType: 'paragraph' | 'sentence'
+  targetIds: string[]
+  contextText: string
+  confidence: number // 0-1
+  matchedKeywords: string[]
+}
+
+/**
+ * 意图解析请求
+ */
+export interface IntentParseRequest {
+  documentId: string
+  mode: 'structured-intent' | 'template-direct'
+  userInput: string
+  context: {
+    sectionTag?: string
+    targetType: 'paragraph' | 'sentence' | 'document'
+    targetIds: string[]
+    text: string
+  }
+  docType: 'cv' | 'letter' | 'ps'
+  language: 'zh-cn' | 'en' | 'sp'
+  template?: string // 模板命令时使用
+}
+
+/**
+ * 意图解析响应
+ */
+export interface IntentParseResponse {
+  status: 'ok' | 'error'
+  intent?: {
+    intentType: 'modify' | 'insert' | 'delete' | 'translate' | 'format'
+    targetType: 'document' | 'paragraph' | 'sentence'
+    sectionTag?: string
+    operations: Array<{
+      targetId: string
+      oldText?: string
+      newText: string
+      action: 'replace' | 'insert' | 'delete'
+    }>
+    confidence: number
+  }
+  appliedContent?: string
+  error?: string
+}
+
+/**
+ * 编辑操作应用器的操作项
+ */
+export interface EditOperation {
+  targetId: string
+  oldText?: string
+  newText: string
+  action: 'replace' | 'insert' | 'delete'
+}
+
 // 扁平化数据结构设计完成 - 简单可靠，便于序列化
+
+/**
+ * 段落关键词索引（Append-Only）
+ */
+export interface ParagraphKeywordRecord {
+  id: string
+  documentId: string
+  versionId: string
+  paragraphId: string
+  docType: 'cv' | 'letter' | 'ps'
+  language: 'zh-cn' | 'en' | 'sp'
+  keywords: string[]
+  execVerbs: string[]
+  scores: { density: number; actionVerbScore: number; relevance: number }
+  contentLength: number
+  contentEncoding: 'utf-8'
+  timestamp: number
+}
+
+/**
+ * 关键词词典（可持久化覆盖，默认内置）
+ */
+export interface KeywordDictionaryRecord {
+  id: string
+  docType: 'cv' | 'letter' | 'ps'
+  language: 'zh-cn' | 'en' | 'sp'
+  actionVerbs: string[]
+  domainTerms: string[]
+  softSkills: string[]
+  academicTerms: string[]
+  updatedAt: number
+}
