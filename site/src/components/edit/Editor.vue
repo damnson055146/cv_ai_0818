@@ -82,6 +82,16 @@
         <AiToolbar :getSelection="getCurrentSelectionText" :getSelectionRect="getCurrentSelectionRect" :applyText="replaceSelectionText" />
       </ClientOnly>
       <div ref="editorRef" class="flex-1 min-w-0 min-h-0 overflow-auto" h-full />
+      
+      <!-- Fix-in-Chat 悬浮按钮 -->
+      <div 
+        v-if="fixButtonVisible" 
+        :style="fixButtonStyle"
+        class="fixed z-50 bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded-lg text-sm cursor-pointer shadow-lg transition-all duration-200"
+        @click="handleFixInChat"
+      >
+        🔧 Fix in Chat
+      </div>
     </div>
   </div>
   
@@ -159,6 +169,8 @@ onMounted(async () => {
       refreshSidebarState();
       // 更新工作区选区信息
       updateWorkspaceSelection();
+      // 检查选区变化，显示/隐藏 Fix-in-Chat 按钮
+      updateFixButtonVisibility();
     });
     ed.onDidChangeModelContent(() => refreshSidebarState());
     refreshSidebarState();
@@ -223,6 +235,12 @@ onBeforeUnmount(() => {
   }
   editor?.dispose();
 });
+
+// Fix-in-Chat 状态管理
+const fixButtonVisible = ref(false);
+const fixButtonStyle = ref({});
+const selectedTextForFix = ref('');
+const selectionPosition = ref<{startLine: number, startColumn: number, endLine: number, endColumn: number} | null>(null);
 
 // Watch the updates of editor content on other places
 const { data, toggleMdFlag, toggleCssFlag } = useDataStore();
@@ -364,11 +382,15 @@ const initializeWorkspaceIntegration = () => {
   document.addEventListener('get-document-content', handleGetDocumentContent);
   document.addEventListener('get-document-structure', handleGetDocumentStructure);
   
+  // Fix-in-Chat 事件监听
+  window.addEventListener('apply-fix-suggestion', handleApplyFixSuggestion);
+  
   // 清理事件监听器
   onBeforeUnmount(() => {
     document.removeEventListener('workspace-ai-result', handleAiResult);
     document.removeEventListener('get-document-content', handleGetDocumentContent);
     document.removeEventListener('get-document-structure', handleGetDocumentStructure);
+    window.removeEventListener('apply-fix-suggestion', handleApplyFixSuggestion);
   });
 };
 
@@ -1381,5 +1403,199 @@ const insertTemplate = (type: 'internship-title' | 'internship-entry' | 'campus-
   ed.executeEdits('insert-template', [
     { range: selection, text, forceMoveMarkers: true }
   ]);
+};
+
+// Fix-in-Chat 相关函数
+/**
+ * 更新 Fix-in-Chat 按钮的显示状态和位置
+ */
+const updateFixButtonVisibility = () => {
+  if (!editor) return;
+  
+  const ed = editor.editor;
+  const selection = ed.getSelection();
+  const model = ed.getModel();
+  
+  if (!selection || !model || selection.isEmpty()) {
+    fixButtonVisible.value = false;
+    selectedTextForFix.value = '';
+    selectionPosition.value = null;
+    return;
+  }
+  
+  // 获取选中的文本
+  const selectedText = model.getValueInRange(selection);
+  if (!selectedText.trim()) {
+    fixButtonVisible.value = false;
+    selectedTextForFix.value = '';
+    selectionPosition.value = null;
+    return;
+  }
+  
+  // 保存选中文本和位置信息
+  selectedTextForFix.value = selectedText;
+  selectionPosition.value = {
+    startLine: selection.startLineNumber,
+    startColumn: selection.startColumn,
+    endLine: selection.endLineNumber,
+    endColumn: selection.endColumn
+  };
+  
+  // 计算按钮位置（选区右下角附近）
+  const endPosition = ed.getScrolledVisiblePosition({
+    lineNumber: selection.endLineNumber,
+    column: selection.endColumn
+  });
+  
+  if (endPosition) {
+    const editorDom = ed.getDomNode();
+    const editorRect = editorDom?.getBoundingClientRect();
+    
+    if (editorRect) {
+      fixButtonStyle.value = {
+        left: `${editorRect.left + endPosition.left + 10}px`,
+        top: `${editorRect.top + endPosition.top + 25}px`
+      };
+      fixButtonVisible.value = true;
+    }
+  }
+};
+
+/**
+ * 处理 Fix-in-Chat 按钮点击
+ */
+const handleFixInChat = () => {
+  if (!selectedTextForFix.value || !selectionPosition.value) {
+    console.warn('[Fix-in-Chat] 没有选中的文本');
+    return;
+  }
+  
+  console.log('[Fix-in-Chat] 启动修复模式', {
+    selectedText: selectedTextForFix.value,
+    position: selectionPosition.value
+  });
+  
+  // 发送事件给 Chatbot 组件，启动 Fix-in-Chat 模式
+  const fixEvent = new CustomEvent('start-fix-in-chat', {
+    detail: {
+      selectedText: selectedTextForFix.value,
+      position: selectionPosition.value,
+      context: extractSelectionContext()
+    }
+  });
+  
+  window.dispatchEvent(fixEvent);
+  
+  // 隐藏按钮
+  fixButtonVisible.value = false;
+};
+
+/**
+ * 提取选区的上下文（前后几行）
+ */
+const extractSelectionContext = () => {
+  if (!editor || !selectionPosition.value) return {};
+  
+  const model = editor.editor.getModel();
+  if (!model) return {};
+  
+  const { startLine, endLine } = selectionPosition.value;
+  const totalLines = model.getLineCount();
+  
+  // 提取前后各3行作为上下文
+  const contextLines = 3;
+  const beforeStart = Math.max(1, startLine - contextLines);
+  const afterEnd = Math.min(totalLines, endLine + contextLines);
+  
+  const beforeContext = beforeStart < startLine ? 
+    model.getValueInRange({
+      startLineNumber: beforeStart,
+      startColumn: 1,
+      endLineNumber: startLine - 1,
+      endColumn: model.getLineMaxColumn(startLine - 1)
+    }) : '';
+    
+  const afterContext = afterEnd > endLine ?
+    model.getValueInRange({
+      startLineNumber: endLine + 1,
+      startColumn: 1,
+      endLineNumber: afterEnd,
+      endColumn: model.getLineMaxColumn(afterEnd)
+    }) : '';
+  
+  return {
+    beforeContext,
+    afterContext,
+    selectedLine: startLine,
+    totalLines
+  };
+};
+
+/**
+ * 处理应用 Fix-in-Chat 建议事件
+ */
+const handleApplyFixSuggestion = (event: any) => {
+  const { position, newText, originalText } = event.detail;
+  
+  if (!editor || !position) {
+    console.warn('[Fix-in-Chat] 编辑器未初始化或缺少位置信息');
+    return;
+  }
+  
+  console.log('[Fix-in-Chat] 应用修复建议', {
+    position,
+    originalLength: originalText?.length,
+    newLength: newText?.length
+  });
+  
+  try {
+    const ed = editor.editor;
+    const model = ed.getModel();
+    
+    if (!model) {
+      console.warn('[Fix-in-Chat] 编辑器模型未找到');
+      return;
+    }
+    
+    // 构建 Monaco 选择范围
+    const range = new (window as any).monaco.Range(
+      position.startLine,
+      position.startColumn,
+      position.endLine,
+      position.endColumn
+    );
+    
+    // 验证当前选区内容是否匹配（可选的安全检查）
+    if (originalText) {
+      const currentText = model.getValueInRange(range);
+      if (currentText !== originalText) {
+        console.warn('[Fix-in-Chat] 当前选区内容与原文不匹配，但仍将应用修改');
+      }
+    }
+    
+    // 应用文本替换
+    ed.executeEdits('fix-in-chat', [
+      { range, text: newText, forceMoveMarkers: true }
+    ]);
+    
+    // 设置光标到修改后的文本末尾
+    const newEndLine = position.startLine + (newText.split('\n').length - 1);
+    const newEndColumn = newText.includes('\n') 
+      ? newText.split('\n').pop()!.length + 1
+      : position.startColumn + newText.length;
+    
+    const newPosition = {
+      lineNumber: newEndLine,
+      column: newEndColumn
+    };
+    
+    ed.setPosition(newPosition);
+    ed.focus();
+    
+    console.log('[Fix-in-Chat] 修复建议已成功应用');
+    
+  } catch (error) {
+    console.error('[Fix-in-Chat] 应用修复建议失败:', error);
+  }
 };
 </script>

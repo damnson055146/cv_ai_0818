@@ -155,6 +155,18 @@
       </form>
     </div>
   </Teleport>
+
+  <!-- Fix-in-Chat Diff 预览 -->
+  <DiffPreview
+    :visible="diffPreviewVisible"
+    :original-text="fixOriginalText"
+    :suggested-text="fixSuggestedText"
+    :context-info="fixContextInfo"
+    @close="closeDiffPreview"
+    @apply="applyFixSuggestion"
+    @reject="rejectFixSuggestion"
+    @edit="editFixSuggestion"
+  />
 </template>
 
 <script setup lang="ts">
@@ -164,6 +176,10 @@ import { useAiRequirementParser } from "~/composables/aiRequirementParser";
 import type { AiRequirement } from "~/composables/workspaceOperator";
 import { useWorkspaceOperator } from "~/composables/workspaceOperator";
 import { useDocumentStructureParser } from "~/composables/documentStructureParser";
+import DiffPreview from "~/components/shared/DiffPreview.vue";
+import { contextExtractor } from "~/data/contextExtractor";
+import type { SelectionContext } from "~/data/contextExtractor";
+import { UpdateManager } from "~/data/updateManager";
 
 type Role = "user" | "assistant" | "system";
 interface Message {
@@ -272,6 +288,17 @@ const bubbleMargin = 16; // px
 const panelWidth = ref(420);
 const panelHeight = ref(560);
 
+// Fix-in-Chat 状态管理
+const diffPreviewVisible = ref(false);
+const fixOriginalText = ref('');
+const fixSuggestedText = ref('');
+const fixContextInfo = ref<SelectionContext | undefined>();
+const fixPosition = ref<{startLine: number, startColumn: number, endLine: number, endColumn: number} | null>(null);
+const fixMode = ref(false); // 是否在 Fix-in-Chat 模式
+
+// UpdateManager 实例用于撤销/重做
+const updateManager = new UpdateManager();
+
 const bubbleStyle = computed(() => ({
   left: bubbleX.value + "px",
   top: bubbleY.value + "px"
@@ -322,13 +349,22 @@ function setMode(mode: 'ask' | 'edit') {
 
 const canSend = computed(() => draft.value.trim().length > 0 && !isThinking.value);
 
-function handleSend() {
+async function handleSend() {
   if (!canSend.value) return;
   const text = draft.value.trim();
   draft.value = "";
   pushMessage({ role: "user", content: text });
   // Reset input height after sending long messages
   nextTick(() => resetInputHeight());
+  
+  // 检查是否在 Fix-in-Chat 模式
+  if (fixMode.value) {
+    const handled = await processFixInChatMessage(text);
+    if (handled) {
+      return; // Fix-in-Chat 已处理，不走普通流程
+    }
+  }
+  
   simulateAssistant(text);
 }
 
@@ -386,6 +422,21 @@ function resetInputHeight() {
 // 3. 支持异步操作队列和进度反馈 ✓
 async function simulateAssistant(userText: string) {
   console.log(`[Chatbot] 处理用户输入 - 模式: ${currentMode.value}`)
+  
+  // 检查是否为撤销/重做命令
+  const lowerText = userText.toLowerCase().trim();
+  if (lowerText === '撤销' || lowerText === 'undo' || lowerText === '回退') {
+    await handleUndoCommand();
+    return;
+  }
+  if (lowerText === '重做' || lowerText === 'redo' || lowerText === '恢复') {
+    await handleRedoCommand();
+    return;
+  }
+  if (lowerText === '撤销历史' || lowerText === 'undo history' || lowerText === '历史记录') {
+    showUndoHistory();
+    return;
+  }
   
   // 根据模式选择处理方式
   if (currentMode.value === 'ask') {
@@ -1483,7 +1534,19 @@ async function executeOriginalChatLogic(userText: string) {
     console.debug('[chatbot] endpoint=', endpoint, 'model=', selectedModel.value);
     if (endpoint) {
       const useResponsesApi = selectedModel.value.startsWith('o3');
+      // Build messages and prepend document context as a system message (chat mode only)
       const chatMessages = buildChatMessages();
+      try {
+        const docContent = await getCurrentDocumentContent();
+        if (docContent && typeof docContent === 'string' && docContent.trim().length > 0) {
+          const limit = 8000; // keep prompt size bounded
+          const preview = docContent.length > limit ? (docContent.slice(0, limit) + '\n...') : docContent;
+          chatMessages.unshift({
+            role: 'system',
+            content: `You are chatting with the user about the current document. Use the following document context when answering, but DO NOT modify the document in chat mode.\n\n[DOCUMENT_CONTEXT]\n${preview}`
+          });
+        }
+      } catch {}
       if (useResponsesApi) {
         // Responses API expects `input` and `max_output_tokens`
         const payload: any = {
@@ -1647,6 +1710,333 @@ function updatePosition(clientX: number, clientY: number) {
   bubbleY.value = clamp(originY + dy, 0, maxY);
 }
 
+// Fix-in-Chat 相关函数
+/**
+ * 处理 Fix-in-Chat 事件
+ */
+function handleFixInChatEvent(event: any) {
+  const { selectedText, position, context } = event.detail;
+  
+  console.log('[Fix-in-Chat] 收到修复请求', {
+    selectedText: selectedText.substring(0, 50) + '...',
+    position,
+    context
+  });
+  
+  // 启动 Fix-in-Chat 模式
+  fixMode.value = true;
+  fixOriginalText.value = selectedText;
+  fixPosition.value = position;
+  
+  // 打开聊天面板
+  if (!isOpen.value) {
+    toggleOpen();
+  }
+  
+  // 设置为编辑模式
+  setMode('edit');
+  
+  // 添加提示消息
+  pushMessage({
+    role: 'assistant',
+    content: `🔧 Fix-in-Chat 模式已激活！\n\n已选中 ${selectedText.length} 个字符的文本。请告诉我如何修改这段内容。\n\n例如：\n- "让这段文字更专业"\n- "翻译成英文"\n- "增加技术细节"\n- "改为简洁表达"`
+  });
+  
+  // 自动聚焦输入框
+  setTimeout(() => {
+    const input = document.querySelector('#chatbot-input') as HTMLTextAreaElement;
+    if (input) {
+      input.focus();
+    }
+  }, 100);
+}
+
+/**
+ * 处理 Fix-in-Chat 用户输入
+ */
+async function processFixInChatMessage(userText: string) {
+  if (!fixMode.value || !fixOriginalText.value || !fixPosition.value) {
+    console.warn('[Fix-in-Chat] 模式未激活或缺少原文');
+    return false;
+  }
+  
+  try {
+    // 提取上下文
+    const fullDocument = await getCurrentDocumentContent();
+    const context = await contextExtractor.extractContext({
+      selectedText: fixOriginalText.value,
+      position: fixPosition.value,
+      beforeContext: '',
+      afterContext: '',
+      fullDocument: fullDocument || ''
+    });
+    
+    fixContextInfo.value = context;
+    
+    // 构建 Fix-in-Chat 专用提示
+    const prompt = buildFixInChatPrompt(userText, fixOriginalText.value, context);
+    
+    // 调用 OpenAI 生成修改建议
+    const response = await $fetch('/api/content-generate', {
+      method: 'POST',
+      body: {
+        prompt,
+        context: {
+          selectedText: fixOriginalText.value,
+          sectionType: context.sectionType,
+          contentType: context.contentType
+        }
+      }
+    });
+    
+    if (response.success && response.content) {
+      // 显示 Diff 预览
+      fixSuggestedText.value = response.content;
+      diffPreviewVisible.value = true;
+      
+      pushMessage({
+        role: 'assistant',
+        content: '✅ 已生成修改建议！请在预览窗口中确认是否应用。'
+      });
+    } else {
+      throw new Error(response.error || '生成修改建议失败');
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('[Fix-in-Chat] 处理失败:', error);
+    pushMessage({
+      role: 'assistant',
+      content: `❌ Fix-in-Chat 处理失败: ${error.message}`
+    });
+    return false;
+  }
+}
+
+/**
+ * 构建 Fix-in-Chat 专用提示
+ */
+function buildFixInChatPrompt(userInstruction: string, originalText: string, context: SelectionContext): string {
+  let prompt = `请根据用户指令修改以下文本。只返回修改后的文本，不要任何解释。\n\n`;
+  
+  // 添加上下文信息
+  if (context.sectionType && context.sectionType !== 'other') {
+    prompt += `文本所在章节: ${context.sectionType}\n`;
+  }
+  
+  if (context.contentType) {
+    prompt += `内容类型: ${context.contentType}\n`;
+  }
+  
+  if (context.semanticTags?.length) {
+    prompt += `语义标签: ${context.semanticTags.join(', ')}\n`;
+  }
+  
+  prompt += `\n用户指令: ${userInstruction}\n\n`;
+  prompt += `原文:\n${originalText}\n\n`;
+  prompt += `请严格按照指令修改上述文本，保持原有的 Markdown 格式和结构，只返回修改后的文本内容：`;
+  
+  return prompt;
+}
+
+/**
+ * 关闭 Diff 预览
+ */
+function closeDiffPreview() {
+  diffPreviewVisible.value = false;
+}
+
+/**
+ * 应用修复建议
+ */
+async function applyFixSuggestion() {
+  if (!fixPosition.value || !fixSuggestedText.value) {
+    console.warn('[Fix-in-Chat] 缺少位置或建议文本');
+    return;
+  }
+  
+  try {
+    // 记录撤销历史
+    const currentDocumentId = useDataStore().data.curResumeId || 'default';
+    updateManager.recordUndoableOperation({
+      documentId: String(currentDocumentId),
+      operationType: 'fix-in-chat',
+      position: fixPosition.value,
+      oldText: fixOriginalText.value,
+      newText: fixSuggestedText.value,
+      description: `Fix-in-Chat 修改 (${fixOriginalText.value.length} → ${fixSuggestedText.value.length} 字符)`
+    });
+    
+    // 发送应用事件给编辑器
+    const applyEvent = new CustomEvent('apply-fix-suggestion', {
+      detail: {
+        position: fixPosition.value,
+        newText: fixSuggestedText.value,
+        originalText: fixOriginalText.value
+      }
+    });
+    
+    window.dispatchEvent(applyEvent);
+    
+    // 关闭预览和重置状态
+    diffPreviewVisible.value = false;
+    resetFixMode();
+    
+    // 显示成功消息，包含撤销提示
+    const undoStatus = updateManager.getUndoRedoStatus();
+    pushMessage({
+      role: 'assistant',
+      content: `✅ 修改已应用到文档中！\n\n💡 提示：您可以输入 "撤销" 来撤销刚才的修改。当前有 ${undoStatus.undoCount} 个可撤销的操作。`
+    });
+    
+  } catch (error) {
+    console.error('[Fix-in-Chat] 应用修复建议失败:', error);
+    pushMessage({
+      role: 'assistant',
+      content: `❌ 应用修改失败: ${error.message}`
+    });
+  }
+}
+
+/**
+ * 拒绝修复建议
+ */
+function rejectFixSuggestion() {
+  diffPreviewVisible.value = false;
+  pushMessage({
+    role: 'assistant',
+    content: '❌ 已拒绝修改建议。您可以重新描述修改要求。'
+  });
+}
+
+/**
+ * 编辑修复建议
+ */
+function editFixSuggestion() {
+  diffPreviewVisible.value = false;
+  // 将建议文本放入输入框供用户编辑
+  inputText.value = `请修改为：\n${fixSuggestedText.value}`;
+}
+
+/**
+ * 重置 Fix-in-Chat 模式
+ */
+function resetFixMode() {
+  fixMode.value = false;
+  fixOriginalText.value = '';
+  fixSuggestedText.value = '';
+  fixContextInfo.value = undefined;
+  fixPosition.value = null;
+}
+
+// ====== 撤销/重做命令处理 ======
+
+/**
+ * 处理撤销命令
+ */
+async function handleUndoCommand() {
+  try {
+    const result = await updateManager.undoLastOperation();
+    
+    if (result.success && result.item) {
+      // 发送撤销事件给编辑器
+      const undoEvent = new CustomEvent('apply-fix-suggestion', {
+        detail: {
+          position: result.item.position,
+          newText: result.item.oldText, // 使用原文本
+          originalText: result.item.newText
+        }
+      });
+      
+      window.dispatchEvent(undoEvent);
+      
+      const undoStatus = updateManager.getUndoRedoStatus();
+      pushMessage({
+        role: 'assistant',
+        content: `↩️ 已撤销操作: ${result.item.description}\n\n当前还有 ${undoStatus.undoCount} 个可撤销的操作，${undoStatus.redoCount} 个可重做的操作。`
+      });
+    } else {
+      pushMessage({
+        role: 'assistant',
+        content: `❌ ${result.error || '没有可撤销的操作'}`
+      });
+    }
+  } catch (error) {
+    console.error('[Chatbot] 撤销操作失败:', error);
+    pushMessage({
+      role: 'assistant',
+      content: `❌ 撤销操作失败: ${error.message}`
+    });
+  }
+}
+
+/**
+ * 处理重做命令
+ */
+async function handleRedoCommand() {
+  try {
+    const result = await updateManager.redoLastOperation();
+    
+    if (result.success && result.item) {
+      // 发送重做事件给编辑器
+      const redoEvent = new CustomEvent('apply-fix-suggestion', {
+        detail: {
+          position: result.item.position,
+          newText: result.item.oldText, // 重做时使用 oldText
+          originalText: result.item.newText
+        }
+      });
+      
+      window.dispatchEvent(redoEvent);
+      
+      const undoStatus = updateManager.getUndoRedoStatus();
+      pushMessage({
+        role: 'assistant',
+        content: `↪️ 已重做操作: ${result.item.description}\n\n当前还有 ${undoStatus.undoCount} 个可撤销的操作，${undoStatus.redoCount} 个可重做的操作。`
+      });
+    } else {
+      pushMessage({
+        role: 'assistant',
+        content: `❌ ${result.error || '没有可重做的操作'}`
+      });
+    }
+  } catch (error) {
+    console.error('[Chatbot] 重做操作失败:', error);
+    pushMessage({
+      role: 'assistant',
+      content: `❌ 重做操作失败: ${error.message}`
+    });
+  }
+}
+
+/**
+ * 显示撤销历史
+ */
+function showUndoHistory() {
+  const undoStatus = updateManager.getUndoRedoStatus();
+  
+  let historyMessage = `📝 撤销/重做状态:\n\n`;
+  historyMessage += `• 可撤销操作: ${undoStatus.undoCount} 个\n`;
+  historyMessage += `• 可重做操作: ${undoStatus.redoCount} 个\n\n`;
+  
+  if (undoStatus.undoCount === 0 && undoStatus.redoCount === 0) {
+    historyMessage += `暂无历史记录。\n\n`;
+  } else {
+    historyMessage += `💡 使用方法:\n`;
+    if (undoStatus.undoCount > 0) {
+      historyMessage += `• 输入 "撤销" 撤销上一个操作\n`;
+    }
+    if (undoStatus.redoCount > 0) {
+      historyMessage += `• 输入 "重做" 重做上一个撤销的操作\n`;
+    }
+  }
+  
+  pushMessage({
+    role: 'assistant',
+    content: historyMessage
+  });
+}
+
 function onBubbleClick() {
   if (dragging) return; // ignore click if user just dragged
   toggleOpen();
@@ -1655,10 +2045,14 @@ function onBubbleClick() {
 onMounted(() => {
   computeInitialPosition();
   window.addEventListener("resize", computeInitialPosition);
+  
+  // 监听 Fix-in-Chat 事件
+  window.addEventListener("start-fix-in-chat", handleFixInChatEvent);
 });
 
 onUnmounted(() => {
   window.removeEventListener("resize", computeInitialPosition);
+  window.removeEventListener("start-fix-in-chat", handleFixInChatEvent);
 });
 </script>
 
