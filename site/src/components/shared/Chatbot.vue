@@ -129,6 +129,55 @@
         <div v-if="isThinking" class="text-light-c text-xs px-1">Assistant is typing…</div>
       </div>
 
+      <!-- 选中文本卡片 -->
+      <div v-if="showSelectionCard" class="px-4 pt-3 pb-2 bg-c border-t border-light-c">
+        <div class="selection-card bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-3 relative">
+          <!-- 关闭按钮 -->
+          <button
+            @click="hideSelectionCard"
+            class="absolute top-2 right-2 w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-800 hover:bg-blue-200 dark:hover:bg-blue-700 flex items-center justify-center"
+          >
+            <span class="i-ph:x text-xs text-blue-600 dark:text-blue-300" />
+          </button>
+          
+          <!-- 卡片标题 -->
+          <div class="flex items-center gap-2 mb-2">
+            <span class="i-ph:selection-plus text-blue-600 dark:text-blue-400" />
+            <span class="text-sm font-medium text-blue-700 dark:text-blue-300">选中的文本</span>
+            <span class="text-xs text-blue-500 dark:text-blue-400">
+              {{ currentSelectionInfo.length }} 字符 • 第{{ currentSelectionInfo.startLine }}-{{ currentSelectionInfo.endLine }}行
+            </span>
+          </div>
+          
+          <!-- 文本内容 -->
+          <div class="bg-white dark:bg-slate-700 rounded border p-2 text-sm max-h-20 overflow-y-auto">
+            <code class="text-gray-800 dark:text-gray-200 whitespace-pre-wrap">{{ currentSelectionInfo.text }}</code>
+          </div>
+          
+          <!-- 快捷操作 -->
+          <div class="flex gap-2 mt-2">
+            <button
+              @click="insertQuickCommand('改成更专业的表达')"
+              class="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 rounded hover:bg-blue-200 dark:hover:bg-blue-700"
+            >
+              专业化
+            </button>
+            <button
+              @click="insertQuickCommand('翻译成英文')"
+              class="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 rounded hover:bg-blue-200 dark:hover:bg-blue-700"
+            >
+              翻译
+            </button>
+            <button
+              @click="insertQuickCommand('简化这段文字')"
+              class="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 rounded hover:bg-blue-200 dark:hover:bg-blue-700"
+            >
+              简化
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Input -->
       <form class="px-4 pb-4 pt-2 bg-c border-t border-light-c" @submit.prevent="handleSend">
         <div class="w-full rounded-full border border-light-c bg-white dark:bg-slate-700 text-black dark:text-white shadow-c flex items-center gap-3 px-3 py-1.5">
@@ -137,6 +186,7 @@
           </button>
 
           <textarea
+            id="chatbot-input"
             ref="inputRef"
             v-model="draft"
             class="flex-1 resize-none bg-transparent border-0 outline-none px-1 py-1 text-sm"
@@ -299,6 +349,15 @@ const fixMode = ref(false); // 是否在 Fix-in-Chat 模式
 // UpdateManager 实例用于撤销/重做
 const updateManager = new UpdateManager();
 
+// 选中文本卡片状态
+const showSelectionCard = ref(false);
+const currentSelectionInfo = ref({
+  text: '',
+  length: 0,
+  startLine: 0,
+  endLine: 0
+});
+
 const bubbleStyle = computed(() => ({
   left: bubbleX.value + "px",
   top: bubbleY.value + "px"
@@ -362,6 +421,32 @@ async function handleSend() {
     const handled = await processFixInChatMessage(text);
     if (handled) {
       return; // Fix-in-Chat 已处理，不走普通流程
+    }
+  }
+  
+  // 智能检测：如果有选中文本且用户输入的是修改指令，自动启动 Fix-in-Chat 模式
+  const workspaceStore = useWorkspaceStore?.();
+  if (workspaceStore && workspaceStore.state.currentSelection.hasSelection && !fixMode.value) {
+    const modificationKeywords = ['改成', '修改为', '改为', '换成', '替换为', '变成', '翻译', '优化', '简化', '详细', '专业'];
+    const hasModificationIntent = modificationKeywords.some(keyword => text.includes(keyword));
+    
+    if (hasModificationIntent) {
+      console.log('[Chatbot] 检测到修改意图，自动启动 Fix-in-Chat 模式');
+      
+      // 自动启动 Fix-in-Chat 模式
+      fixMode.value = true;
+      fixOriginalText.value = workspaceStore.state.currentSelection.text;
+      fixPosition.value = {
+        startLine: workspaceStore.state.currentSelection.startLine,
+        startColumn: workspaceStore.state.currentSelection.startColumn,
+        endLine: workspaceStore.state.currentSelection.endLine,
+        endColumn: workspaceStore.state.currentSelection.endColumn
+      };
+      
+      const handled = await processFixInChatMessage(text);
+      if (handled) {
+        return; // Fix-in-Chat 已处理，不走普通流程
+      }
     }
   }
   
@@ -435,6 +520,10 @@ async function simulateAssistant(userText: string) {
   }
   if (lowerText === '撤销历史' || lowerText === 'undo history' || lowerText === '历史记录') {
     showUndoHistory();
+    return;
+  }
+  if (lowerText === '选中文本' || lowerText === '当前选中' || lowerText === 'selection' || lowerText === '选区') {
+    showCurrentSelection();
     return;
   }
   
@@ -1024,8 +1113,8 @@ async function processSmartEdit(userText: string) {
     } else {
       // 兜底：无法识别范围时，直接将原话按全文编辑执行
       try {
-        const fallbackReq = { action: 'edit', target: 'document', parameters: {}, prompt: userInput }
-        const aiResult = await processWorkspaceAiOperation(fallbackReq as any, userInput)
+        const fallbackReq = { action: 'edit', target: 'document', parameters: {}, prompt: userText }
+        const aiResult = await processWorkspaceAiOperation(fallbackReq as any, userText)
         if (aiResult.success) {
           pushMessage({ 
             role: "assistant", 
@@ -1777,6 +1866,11 @@ async function processFixInChatMessage(userText: string) {
     const prompt = buildFixInChatPrompt(userText, fixOriginalText.value, context);
     
     // 调用 OpenAI 生成修改建议
+    console.log('[Fix-in-Chat] 准备调用 API:', {
+      promptLength: prompt.length,
+      selectedTextLength: fixOriginalText.value.length
+    });
+    
     const response = await $fetch('/api/content-generate', {
       method: 'POST',
       body: {
@@ -1789,17 +1883,20 @@ async function processFixInChatMessage(userText: string) {
       }
     });
     
-    if (response.success && response.content) {
+    console.log('[Fix-in-Chat] API 响应:', response);
+    
+    if (response && response.success && response.content) {
       // 显示 Diff 预览
       fixSuggestedText.value = response.content;
       diffPreviewVisible.value = true;
       
       pushMessage({
         role: 'assistant',
-        content: '✅ 已生成修改建议！请在预览窗口中确认是否应用。'
+        content: `✅ 已生成修改建议！${response.method ? `(使用 ${response.method})` : ''} 请在预览窗口中确认是否应用。`
       });
     } else {
-      throw new Error(response.error || '生成修改建议失败');
+      console.error('[Fix-in-Chat] API 响应格式错误:', response);
+      throw new Error(response?.error || `API响应无效: ${JSON.stringify(response)}`);
     }
     
     return true;
@@ -1915,7 +2012,7 @@ function rejectFixSuggestion() {
 function editFixSuggestion() {
   diffPreviewVisible.value = false;
   // 将建议文本放入输入框供用户编辑
-  inputText.value = `请修改为：\n${fixSuggestedText.value}`;
+  draft.value = `请修改为：\n${fixSuggestedText.value}`;
 }
 
 /**
@@ -2037,6 +2134,115 @@ function showUndoHistory() {
   });
 }
 
+/**
+ * 显示当前选中的文本
+ */
+async function showCurrentSelection() {
+  try {
+    const workspaceStore = useWorkspaceStore?.();
+    
+    if (!workspaceStore) {
+      pushMessage({
+        role: 'assistant',
+        content: '❌ 无法访问工作区状态'
+      });
+      return;
+    }
+    
+    const selection = workspaceStore.state.currentSelection;
+    
+    let message = `🎯 当前选区状态:\n\n`;
+    message += `• 是否有选中文本: ${selection.hasSelection ? '是' : '否'}\n`;
+    
+    if (selection.hasSelection && selection.text) {
+      message += `• 选中文本长度: ${selection.text.length} 字符\n`;
+      message += `• 选中位置: 第${selection.startLine}行 第${selection.startColumn}列 到 第${selection.endLine}行 第${selection.endColumn}列\n\n`;
+      message += `📝 选中的内容:\n`;
+      message += `\`\`\`\n${selection.text}\`\`\`\n\n`;
+      
+      if (fixMode.value) {
+        message += `🔧 当前正在 Fix-in-Chat 模式中\n`;
+        message += `• 原始文本: "${fixOriginalText.value}"\n`;
+      }
+      
+      message += `💡 提示: 你可以直接输入修改指令，如:\n`;
+      message += `• "改成更专业的表达"\n`;
+      message += `• "翻译成英文"\n`;
+      message += `• "简化这段文字"\n`;
+    } else {
+      message += `\n❌ 当前没有选中任何文本\n\n`;
+      message += `💡 请先在编辑器中选中一段文本，然后:\n`;
+      message += `• 点击 "🔧 Fix in Chat" 按钮\n`;
+      message += `• 或直接在这里输入修改指令`;
+    }
+    
+    pushMessage({
+      role: 'assistant',
+      content: message
+    });
+    
+  } catch (error) {
+    console.error('[Chatbot] 显示选中文本失败:', error);
+    pushMessage({
+      role: 'assistant',
+      content: `❌ 获取选中文本失败: ${error.message}`
+    });
+  }
+}
+
+// ====== 选中文本卡片相关函数 ======
+
+/**
+ * 处理选区变化事件
+ */
+function handleSelectionChanged(event: any) {
+  const { hasSelection, text, startLine, endLine, startColumn, endColumn } = event.detail;
+  
+  console.log('[Chatbot] 选区变化:', { hasSelection, textLength: text?.length });
+  
+  if (hasSelection && text && text.trim()) {
+    // 更新选中文本信息
+    currentSelectionInfo.value = {
+      text: text,
+      length: text.length,
+      startLine: startLine,
+      endLine: endLine
+    };
+    
+    // 只在聊天框打开时显示卡片
+    if (isOpen.value) {
+      showSelectionCard.value = true;
+    }
+  } else {
+    // 没有选中文本时隐藏卡片
+    showSelectionCard.value = false;
+  }
+}
+
+/**
+ * 隐藏选中文本卡片
+ */
+function hideSelectionCard() {
+  showSelectionCard.value = false;
+}
+
+/**
+ * 插入快捷命令到输入框
+ */
+function insertQuickCommand(command: string) {
+  draft.value = command;
+  
+  // 自动聚焦到输入框
+  setTimeout(() => {
+    const input = document.querySelector('#chatbot-input') as HTMLTextAreaElement;
+    if (input) {
+      input.focus();
+      // 将光标移到文本末尾
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }, 50);
+}
+
 function onBubbleClick() {
   if (dragging) return; // ignore click if user just dragged
   toggleOpen();
@@ -2048,11 +2254,15 @@ onMounted(() => {
   
   // 监听 Fix-in-Chat 事件
   window.addEventListener("start-fix-in-chat", handleFixInChatEvent);
+  
+  // 监听工作区选区变化事件
+  window.addEventListener("workspace-selection-changed", handleSelectionChanged);
 });
 
 onUnmounted(() => {
   window.removeEventListener("resize", computeInitialPosition);
   window.removeEventListener("start-fix-in-chat", handleFixInChatEvent);
+  window.removeEventListener("workspace-selection-changed", handleSelectionChanged);
 });
 </script>
 

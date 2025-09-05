@@ -18,6 +18,25 @@ import type {
   DocumentState
 } from './ds'
 
+/**
+ * 撤销历史记录项
+ */
+interface UndoHistoryItem {
+  id: string
+  timestamp: number
+  documentId: string
+  operationType: 'fix-in-chat' | 'direct_edit' | 'chatbot_edit'
+  position: {
+    startLine: number
+    startColumn: number
+    endLine: number
+    endColumn: number
+  }
+  oldText: string
+  newText: string
+  description: string
+}
+
 function id(prefix: string) {
   const r = Math.random().toString(36).slice(2, 8)
   return `${prefix}_${Date.now()}_${r}`
@@ -465,157 +484,138 @@ export class UpdateManager {
   return Array.from(byIndex.entries()).sort((a, b) => a[0] - b[0]).map(([, p]) => p)
 }
 
-// ====== Fix-in-Chat 撤销/重做功能 ======
+  // ====== Fix-in-Chat 撤销/重做功能 ======
+  
+  // 撤销历史栈（内存中存储，最多保留50条）
+  private undoHistory: UndoHistoryItem[] = []
+  private redoHistory: UndoHistoryItem[] = []
+  private maxHistorySize = 50
 
-/**
- * 撤销历史记录项
- */
-interface UndoHistoryItem {
-  id: string
-  timestamp: number
-  documentId: string
-  operationType: 'fix-in-chat' | 'direct_edit' | 'chatbot_edit'
-  position: {
-    startLine: number
-    startColumn: number
-    endLine: number
-    endColumn: number
-  }
-  oldText: string
-  newText: string
-  description: string
-}
-
-// 撤销历史栈（内存中存储，最多保留50条）
-private undoHistory: UndoHistoryItem[] = []
-private redoHistory: UndoHistoryItem[] = []
-private maxHistorySize = 50
-
-/**
- * 记录可撤销操作
- */
-recordUndoableOperation(item: Omit<UndoHistoryItem, 'id' | 'timestamp'>): void {
-  const historyItem: UndoHistoryItem = {
-    ...item,
-    id: id('undo'),
-    timestamp: Date.now()
-  }
-  
-  // 添加到撤销历史
-  this.undoHistory.push(historyItem)
-  
-  // 清空重做历史（新操作后不能再重做）
-  this.redoHistory = []
-  
-  // 限制历史大小
-  if (this.undoHistory.length > this.maxHistorySize) {
-    this.undoHistory.shift()
-  }
-  
-  console.log('[UpdateManager] 记录撤销操作:', {
-    type: historyItem.operationType,
-    description: historyItem.description,
-    historySize: this.undoHistory.length
-  })
-}
-
-/**
- * 撤销上一个操作
- */
-async undoLastOperation(): Promise<{ success: boolean; item?: UndoHistoryItem; error?: string }> {
-  if (this.undoHistory.length === 0) {
-    return { success: false, error: '没有可撤销的操作' }
-  }
-  
-  const lastItem = this.undoHistory.pop()!
-  
-  try {
-    // 创建重做项（撤销当前状态）
-    const redoItem: UndoHistoryItem = {
-      ...lastItem,
-      id: id('redo'),
-      timestamp: Date.now(),
-      oldText: lastItem.newText, // 交换新旧文本
-      newText: lastItem.oldText,
-      description: `重做: ${lastItem.description}`
+  /**
+   * 记录可撤销操作
+   */
+  recordUndoableOperation(item: Omit<UndoHistoryItem, 'id' | 'timestamp'>): void {
+    const historyItem: UndoHistoryItem = {
+      ...item,
+      id: id('undo'),
+      timestamp: Date.now()
     }
     
-    // 添加到重做历史
-    this.redoHistory.push(redoItem)
+    // 添加到撤销历史
+    this.undoHistory.push(historyItem)
     
-    console.log('[UpdateManager] 撤销操作:', {
-      type: lastItem.operationType,
-      description: lastItem.description,
-      position: lastItem.position
+    // 清空重做历史（新操作后不能再重做）
+    this.redoHistory = []
+    
+    // 限制历史大小
+    if (this.undoHistory.length > this.maxHistorySize) {
+      this.undoHistory.shift()
+    }
+    
+    console.log('[UpdateManager] 记录撤销操作:', {
+      type: historyItem.operationType,
+      description: historyItem.description,
+      historySize: this.undoHistory.length
     })
-    
-    return { success: true, item: lastItem }
-    
-  } catch (error) {
-    // 撤销失败，恢复历史项
-    this.undoHistory.push(lastItem)
-    console.error('[UpdateManager] 撤销操作失败:', error)
-    return { success: false, error: error.message || '撤销操作失败' }
   }
-}
 
-/**
- * 重做上一个撤销的操作
- */
-async redoLastOperation(): Promise<{ success: boolean; item?: UndoHistoryItem; error?: string }> {
-  if (this.redoHistory.length === 0) {
-    return { success: false, error: '没有可重做的操作' }
+  /**
+   * 撤销上一个操作
+   */
+  async undoLastOperation(): Promise<{ success: boolean; item?: UndoHistoryItem; error?: string }> {
+    if (this.undoHistory.length === 0) {
+      return { success: false, error: '没有可撤销的操作' }
+    }
+    
+    const lastItem = this.undoHistory.pop()!
+    
+    try {
+      // 创建重做项（撤销当前状态）
+      const redoItem: UndoHistoryItem = {
+        ...lastItem,
+        id: id('redo'),
+        timestamp: Date.now(),
+        oldText: lastItem.newText, // 交换新旧文本
+        newText: lastItem.oldText,
+        description: `重做: ${lastItem.description}`
+      }
+      
+      // 添加到重做历史
+      this.redoHistory.push(redoItem)
+      
+      console.log('[UpdateManager] 撤销操作:', {
+        type: lastItem.operationType,
+        description: lastItem.description,
+        position: lastItem.position
+      })
+      
+      return { success: true, item: lastItem }
+      
+    } catch (error: any) {
+      // 撤销失败，恢复历史项
+      this.undoHistory.push(lastItem)
+      console.error('[UpdateManager] 撤销操作失败:', error)
+      return { success: false, error: error.message || '撤销操作失败' }
+    }
   }
-  
-  const redoItem = this.redoHistory.pop()!
-  
-  try {
-    // 重新添加到撤销历史
-    this.undoHistory.push({
-      ...redoItem,
-      id: id('undo'),
-      timestamp: Date.now(),
-      oldText: redoItem.newText, // 交换回来
-      newText: redoItem.oldText,
-      description: redoItem.description.replace('重做: ', '')
-    })
-    
-    console.log('[UpdateManager] 重做操作:', {
-      type: redoItem.operationType,
-      description: redoItem.description,
-      position: redoItem.position
-    })
-    
-    return { success: true, item: redoItem }
-    
-  } catch (error) {
-    // 重做失败，恢复重做项
-    this.redoHistory.push(redoItem)
-    console.error('[UpdateManager] 重做操作失败:', error)
-    return { success: false, error: error.message || '重做操作失败' }
-  }
-}
 
-/**
- * 获取撤销历史信息
- */
-getUndoRedoStatus(): { canUndo: boolean; canRedo: boolean; undoCount: number; redoCount: number } {
-  return {
-    canUndo: this.undoHistory.length > 0,
-    canRedo: this.redoHistory.length > 0,
-    undoCount: this.undoHistory.length,
-    redoCount: this.redoHistory.length
+  /**
+   * 重做上一个撤销的操作
+   */
+  async redoLastOperation(): Promise<{ success: boolean; item?: UndoHistoryItem; error?: string }> {
+    if (this.redoHistory.length === 0) {
+      return { success: false, error: '没有可重做的操作' }
+    }
+    
+    const redoItem = this.redoHistory.pop()!
+    
+    try {
+      // 重新添加到撤销历史
+      this.undoHistory.push({
+        ...redoItem,
+        id: id('undo'),
+        timestamp: Date.now(),
+        oldText: redoItem.newText, // 交换回来
+        newText: redoItem.oldText,
+        description: redoItem.description.replace('重做: ', '')
+      })
+      
+      console.log('[UpdateManager] 重做操作:', {
+        type: redoItem.operationType,
+        description: redoItem.description,
+        position: redoItem.position
+      })
+      
+      return { success: true, item: redoItem }
+      
+    } catch (error: any) {
+      // 重做失败，恢复重做项
+      this.redoHistory.push(redoItem)
+      console.error('[UpdateManager] 重做操作失败:', error)
+      return { success: false, error: error.message || '重做操作失败' }
+    }
   }
-}
 
-/**
- * 清空撤销/重做历史
- */
-clearUndoRedoHistory(): void {
-  this.undoHistory = []
-  this.redoHistory = []
-  console.log('[UpdateManager] 撤销/重做历史已清空')
-}
+  /**
+   * 获取撤销历史信息
+   */
+  getUndoRedoStatus(): { canUndo: boolean; canRedo: boolean; undoCount: number; redoCount: number } {
+    return {
+      canUndo: this.undoHistory.length > 0,
+      canRedo: this.redoHistory.length > 0,
+      undoCount: this.undoHistory.length,
+      redoCount: this.redoHistory.length
+    }
+  }
+
+  /**
+   * 清空撤销/重做历史
+   */
+  clearUndoRedoHistory(): void {
+    this.undoHistory = []
+    this.redoHistory = []
+    console.log('[UpdateManager] 撤销/重做历史已清空')
+  }
 }
 
 

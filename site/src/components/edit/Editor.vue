@@ -125,7 +125,7 @@ import AiToolbar from "~/components/edit/toolbar/AiToolbar.vue";
 import { UpdateManager } from "~/data/updateManager";
 import { VersionManager } from "~/data/versionManager";
 import { ref, onMounted, onBeforeUnmount, watch, computed, reactive } from "vue";
-import type { useDataStore } from "~/composables";
+import { useDataStore } from "~/composables";
 
 const props = defineProps<{
   leftSidebarComponent?: any;
@@ -171,6 +171,8 @@ onMounted(async () => {
       updateWorkspaceSelection();
       // 检查选区变化，显示/隐藏 Fix-in-Chat 按钮
       updateFixButtonVisibility();
+      // 发送选区变化事件给聊天框
+      notifySelectionChanged();
     });
     ed.onDidChangeModelContent(() => refreshSidebarState());
     refreshSidebarState();
@@ -1410,13 +1412,25 @@ const insertTemplate = (type: 'internship-title' | 'internship-entry' | 'campus-
  * 更新 Fix-in-Chat 按钮的显示状态和位置
  */
 const updateFixButtonVisibility = () => {
-  if (!editor) return;
+  console.log('[Fix-in-Chat] updateFixButtonVisibility 被调用');
+  
+  if (!editor) {
+    console.log('[Fix-in-Chat] editor 未初始化');
+    return;
+  }
   
   const ed = editor.editor;
   const selection = ed.getSelection();
   const model = ed.getModel();
   
+  console.log('[Fix-in-Chat] 选区检查:', { 
+    hasSelection: !!selection, 
+    hasModel: !!model, 
+    isEmpty: selection?.isEmpty()
+  });
+  
   if (!selection || !model || selection.isEmpty()) {
+    console.log('[Fix-in-Chat] 隐藏按钮：无选区');
     fixButtonVisible.value = false;
     selectedTextForFix.value = '';
     selectionPosition.value = null;
@@ -1425,7 +1439,10 @@ const updateFixButtonVisibility = () => {
   
   // 获取选中的文本
   const selectedText = model.getValueInRange(selection);
+  console.log('[Fix-in-Chat] 选中的文本:', selectedText);
+  
   if (!selectedText.trim()) {
+    console.log('[Fix-in-Chat] 隐藏按钮：选中文本为空');
     fixButtonVisible.value = false;
     selectedTextForFix.value = '';
     selectionPosition.value = null;
@@ -1451,13 +1468,30 @@ const updateFixButtonVisibility = () => {
     const editorDom = ed.getDomNode();
     const editorRect = editorDom?.getBoundingClientRect();
     
+    console.log('[Fix-in-Chat] 位置计算:', {
+      endPosition,
+      editorRect: editorRect ? { 
+        left: editorRect.left, 
+        top: editorRect.top, 
+        width: editorRect.width, 
+        height: editorRect.height 
+      } : null
+    });
+    
     if (editorRect) {
+      const buttonLeft = editorRect.left + endPosition.left + 10;
+      const buttonTop = editorRect.top + endPosition.top + 25;
+      
       fixButtonStyle.value = {
-        left: `${editorRect.left + endPosition.left + 10}px`,
-        top: `${editorRect.top + endPosition.top + 25}px`
+        left: `${buttonLeft}px`,
+        top: `${buttonTop}px`
       };
       fixButtonVisible.value = true;
+      
+      console.log('[Fix-in-Chat] 显示按钮在:', fixButtonStyle.value);
     }
+  } else {
+    console.log('[Fix-in-Chat] 无法获取选区位置');
   }
 };
 
@@ -1597,5 +1631,49 @@ const handleApplyFixSuggestion = (event: any) => {
   } catch (error) {
     console.error('[Fix-in-Chat] 应用修复建议失败:', error);
   }
+};
+
+/**
+ * 通知聊天框选区变化
+ */
+const notifySelectionChanged = () => {
+  if (!editor) return;
+  
+  const ed = editor.editor;
+  const selection = ed.getSelection();
+  const model = ed.getModel();
+  
+  if (!selection || !model) return;
+  
+  const hasSelection = !selection.isEmpty();
+  let selectionData = {
+    hasSelection: false,
+    text: '',
+    startLine: 0,
+    endLine: 0,
+    startColumn: 0,
+    endColumn: 0
+  };
+  
+  if (hasSelection) {
+    const text = model.getValueInRange(selection);
+    if (text.trim()) {
+      selectionData = {
+        hasSelection: true,
+        text: text,
+        startLine: selection.startLineNumber,
+        endLine: selection.endLineNumber,
+        startColumn: selection.startColumn,
+        endColumn: selection.endColumn
+      };
+    }
+  }
+  
+  // 发送选区变化事件
+  const selectionEvent = new CustomEvent('workspace-selection-changed', {
+    detail: selectionData
+  });
+  
+  window.dispatchEvent(selectionEvent);
 };
 </script>
