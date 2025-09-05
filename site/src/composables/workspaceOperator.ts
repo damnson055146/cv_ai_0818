@@ -234,9 +234,13 @@ class WorkspaceOperator {
     
     this.isProcessing.value = true
     
-    while (this.operationQueue.length > 0) {
+    // 使用 for 循环替代 while，更清晰的控制流
+    const queueLength = this.operationQueue.length
+    for (let i = 0; i < queueLength; i++) {
       const operation = this.operationQueue.shift()!
-      await this.executeOperation(operation)
+      if (operation) {
+        await this.executeOperation(operation)
+      }
     }
     
     this.isProcessing.value = false

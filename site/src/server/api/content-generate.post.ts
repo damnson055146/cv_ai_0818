@@ -23,10 +23,10 @@ export default defineEventHandler(async (event) => {
       try {
         // 使用真实的 OpenAI API
         return await generateWithOpenAI(prompt, context, runtimeConfig)
-      } catch (openaiError) {
+      } catch (openaiError: any) {
         console.error('[Content Generate API] OpenAI 调用失败，回退到 Mock:', openaiError)
         // OpenAI 失败时回退到 Mock
-        return await generateMockResponse(prompt, context, `OpenAI失败: ${openaiError.message}`)
+        return await generateMockResponse(prompt, context, `OpenAI失败: ${openaiError?.message || 'Unknown error'}`)
       }
     } else {
       console.log('[Content Generate API] 使用 Mock 模式 (未配置 OpenAI)')

@@ -60,14 +60,17 @@ function splitSentences(content: string): Array<{ start: number; end: number }> 
   const result: Array<{ start: number; end: number }> = []
   let start = 0
   const regex = /([.!?。！？])(\s+|$)/g
+  
+  // 使用 for 循环替代 while，更清晰的控制流
   let match: RegExpExecArray | null
-  while ((match = regex.exec(content)) !== null) {
+  for (match = regex.exec(content); match !== null; match = regex.exec(content)) {
     const end = match.index + match[1].length
     if (end > start) {
       result.push({ start, end })
       start = match.index + match[0].length
     }
   }
+  
   if (start < content.length) {
     result.push({ start, end: content.length })
   }
@@ -80,6 +83,7 @@ export interface ParseMarkdownOptions {
   timestamp?: number
 }
 
+// 基于 for + 状态机 + consume 函数的实现
 export class MarkdownFlatParser {
   private storage: FlatStorageManager
 
@@ -100,11 +104,13 @@ export class MarkdownFlatParser {
     const paragraphs: ParagraphRecord[] = []
     const sentences: SentenceRecord[] = []
 
+    // 游标与状态
     let i = 0
     let paragraphIndex = 0
     let globalSentenceIndex = 0
-    let inCode = false
-    let codeStartLine = -1
+    type State = 'normal' | 'code'
+    let state: State = 'normal'
+    let blockStart = -1 // 通用块起始行（code/list/quote/paragraph/heading）
 
     const finalizeParagraph = (
       startLine: number,
@@ -168,81 +174,73 @@ export class MarkdownFlatParser {
       paragraphIndex++
     }
 
-    while (i < lines.length) {
-      const line = lines[i]
-      const trimmed = line.trim()
-      const typeInfo = detectParagraphType(line)
+    function isListLine(idx: number) { return /^\s*([-*+]\s+|\d+\.[\s\t]+)/.test(lines[idx] || '') }
+    function isQuoteLine(idx: number) { return /^>\s?/.test((lines[idx] || '').trim()) }
+    function isFence(idx: number) { return /^```/.test((lines[idx] || '').trim()) }
+    function isHeading(idx: number) { return /^#{1,6}\s/.test((lines[idx] || '').trim()) }
 
-      if (/^```/.test(trimmed)) {
-        if (!inCode) {
-          inCode = true
-          codeStartLine = i
-          i++
-          continue
+    function consumeHeading(idx: number) {
+      const { level } = detectParagraphType(lines[idx] || '')
+      finalizeParagraph(idx, idx, 'heading', level)
+      return idx + 1
+    }
+
+    function consumeList(idx: number) {
+      const start = idx
+      let end = idx
+      for (let k = idx + 1; k < lines.length; k++) {
+        if (!isListLine(k)) break
+        end = k
+      }
+      finalizeParagraph(start, end, 'list')
+      return end + 1
+    }
+
+    function consumeQuote(idx: number) {
+      const start = idx
+      let end = idx
+      for (let k = idx + 1; k < lines.length; k++) {
+        if (!isQuoteLine(k)) break
+        end = k
+      }
+      finalizeParagraph(start, end, 'quote')
+      return end + 1
+    }
+
+    function consumeParagraph(idx: number) {
+      const start = idx
+      let end = idx
+      for (let k = idx + 1; k < lines.length; k++) {
+        const t = (lines[k] || '').trim()
+        if (t === '' || isFence(k) || isHeading(k) || isQuoteLine(k) || isListLine(k)) break
+        end = k
+      }
+      finalizeParagraph(start, end, 'paragraph')
+      return end + 1
+    }
+
+    for (i = 0; i < lines.length; ) {
+      const trimmed = (lines[i] || '').trim()
+      if (state === 'code') {
+        if (isFence(i)) {
+          // 结束代码块，包含围栏行
+          finalizeParagraph(blockStart, i, 'code')
+          state = 'normal'
+          blockStart = -1
+          i += 1
         } else {
-          // end code block includes the fence line
-          finalizeParagraph(codeStartLine, i, 'code')
-          inCode = false
-          codeStartLine = -1
-          i++
-          continue
+          i += 1
         }
-      }
-
-      if (inCode) {
-        i++
         continue
       }
 
-      if (trimmed === '') {
-        // blank line boundary; skip
-        i++
-        continue
-      }
-
-      if (typeInfo.type === 'heading') {
-        finalizeParagraph(i, i, 'heading', typeInfo.level)
-        i++
-        continue
-      }
-
-      if (typeInfo.type === 'list') {
-        const startLine = i
-        let endLine = i
-        i++
-        while (i < lines.length && /^\s*([-*+]\s+|\d+\.[\s\t]+)/.test(lines[i])) {
-          endLine = i
-          i++
-        }
-        finalizeParagraph(startLine, endLine, 'list')
-        continue
-      }
-
-      if (typeInfo.type === 'quote') {
-        const startLine = i
-        let endLine = i
-        i++
-        while (i < lines.length && /^>\s?/.test(lines[i].trim())) {
-          endLine = i
-          i++
-        }
-        finalizeParagraph(startLine, endLine, 'quote')
-        continue
-      }
-
-      // normal paragraph: gather until blank or special
-      const paraStart = i
-      let paraEnd = i
-      i++
-      while (i < lines.length) {
-        const t = lines[i].trim()
-        if (t === '' || /^```/.test(t) || /^#{1,6}\s/.test(t) || /^>\s?/.test(t) || /^\s*([-*+]\s+|\d+\.[\s\t]+)/.test(lines[i])) {
-          break
-        }
-        paraEnd = i
-        i++
-      }
-      finalizeParagraph(paraStart, paraEnd, 'paragraph')
+      // normal 状态
+      if (trimmed === '') { i += 1; continue }
+      if (isFence(i)) { state = 'code'; blockStart = i; i += 1; continue }
+      if (isHeading(i)) { i = consumeHeading(i); continue }
+      if (isListLine(i)) { i = consumeList(i); continue }
+      if (isQuoteLine(i)) { i = consumeQuote(i); continue }
+      i = consumeParagraph(i)
     }
 
     const parseResult: ParseResult = {

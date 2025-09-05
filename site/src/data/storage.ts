@@ -64,9 +64,12 @@ export class FlatStorageManager {
     const versions = await this.loadDocumentVersions(version.documentId)
     versions.push(version)
     
-    // 保持版本数量限制
-    while (versions.length > this.config.maxVersionHistory) {
-      versions.shift()
+    // 保持版本数量限制 - 使用 for 循环替代 while
+    const excessCount = versions.length - this.config.maxVersionHistory
+    if (excessCount > 0) {
+      for (let i = 0; i < excessCount; i++) {
+        versions.shift()
+      }
     }
     
     await this.saveToLocalStorage(`${this.keys.DOCUMENT_VERSIONS}_${version.documentId}`, versions)
@@ -97,9 +100,12 @@ export class FlatStorageManager {
     const operations = await this.loadOperationRecords(operation.documentId)
     operations.push(operation)
     
-    // 保持操作记录数量限制
-    while (operations.length > this.config.maxOperationHistory) {
-      operations.shift()
+    // 保持操作记录数量限制 - 使用 for 循环替代 while
+    const excessCount = operations.length - this.config.maxOperationHistory
+    if (excessCount > 0) {
+      for (let i = 0; i < excessCount; i++) {
+        operations.shift()
+      }
     }
     
     await this.saveToLocalStorage(`${this.keys.OPERATION_RECORDS}_${operation.documentId}`, operations)
@@ -310,9 +316,12 @@ export class FlatStorageManager {
     const sessions = await this.loadUserSessionRecords(session.userId)
     sessions.push(session)
     
-    // 保持最近100个会话记录
-    while (sessions.length > 100) {
-      sessions.shift()
+    // 保持最近100个会话记录 - 使用 for 循环替代 while
+    const excessCount = sessions.length - 100
+    if (excessCount > 0) {
+      for (let i = 0; i < excessCount; i++) {
+        sessions.shift()
+      }
     }
     
     await this.saveToLocalStorage(`${this.userKeys.USER_SESSIONS}_${session.userId}`, sessions)
