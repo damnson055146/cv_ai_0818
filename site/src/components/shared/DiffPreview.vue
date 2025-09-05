@@ -1,11 +1,22 @@
 <template>
-  <div v-if="visible" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] overflow-hidden">
+  <div v-if="visible" class="fixed inset-0 z-50 bg-black bg-opacity-50">
+    <div 
+      ref="panelRef"
+      class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] overflow-hidden transition-shadow duration-200"
+      :class="{ 'cursor-move': !isDragging, 'cursor-grabbing shadow-2xl': isDragging }"
+      :style="panelStyle"
+      @mousedown="startDrag"
+    >
       <!-- 头部 -->
       <div class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-600">
-        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-          🔧 Fix-in-Chat 预览
-        </h3>
+        <div class="flex items-center space-x-2">
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+            🔧 Fix-in-Chat 预览
+          </h3>
+          <span class="text-xs text-gray-400 dark:text-gray-500">
+            (可拖动)
+          </span>
+        </div>
         <button
           @click="$emit('close')"
           class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
@@ -80,6 +91,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import type { SelectionContext } from '~/data/contextExtractor'
 
 interface Props {
@@ -97,6 +109,69 @@ defineEmits<{
   reject: []
   edit: []
 }>()
+
+// 拖动相关的状态
+const panelRef = ref<HTMLElement | null>(null)
+const isDragging = ref(false)
+const dragOffset = ref({ x: 0, y: 0 })
+const panelPosition = ref({ x: 100, y: 100 }) // 默认靠左位置
+
+// 计算面板样式
+const panelStyle = computed(() => ({
+  position: 'absolute',
+  left: `${panelPosition.value.x}px`,
+  top: `${panelPosition.value.y}px`,
+  transform: 'none'
+}))
+
+// 开始拖动
+const startDrag = (event: MouseEvent) => {
+  if (!panelRef.value) return
+  
+  isDragging.value = true
+  
+  const rect = panelRef.value.getBoundingClientRect()
+  dragOffset.value = {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top
+  }
+  
+  event.preventDefault()
+  document.addEventListener('mousemove', onDrag)
+  document.addEventListener('mouseup', stopDrag)
+}
+
+// 拖动过程中
+const onDrag = (event: MouseEvent) => {
+  if (!isDragging.value || !panelRef.value) return
+  
+  const newX = event.clientX - dragOffset.value.x
+  const newY = event.clientY - dragOffset.value.y
+  
+  // 限制在视窗范围内
+  const rect = panelRef.value.getBoundingClientRect()
+  const maxX = window.innerWidth - rect.width
+  const maxY = window.innerHeight - rect.height
+  
+  panelPosition.value = {
+    x: Math.max(0, Math.min(newX, maxX)),
+    y: Math.max(0, Math.min(newY, maxY))
+  }
+}
+
+// 停止拖动
+const stopDrag = () => {
+  isDragging.value = false
+  document.removeEventListener('mousemove', onDrag)
+  document.removeEventListener('mouseup', stopDrag)
+}
+
+// 组件卸载时清理事件监听器
+onUnmounted(() => {
+  if (isDragging.value) {
+    stopDrag()
+  }
+})
 
 /**
  * 获取章节名称

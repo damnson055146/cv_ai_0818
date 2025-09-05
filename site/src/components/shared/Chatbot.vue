@@ -32,22 +32,23 @@
         </div>
         <div class="hstack space-x-1">
           <!-- 模式切换按钮 -->
-          <div class="hstack space-x-1 mr-2">
+          <div class="hstack space-x-2 mr-3">
             <button 
               @click="setMode('ask')"
-              class="mode-btn"
-              :class="currentMode === 'ask' ? 'mode-btn-active' : 'mode-btn-inactive'"
+              class="mode-text-btn"
+              :class="currentMode === 'ask' ? 'mode-text-btn-active' : 'mode-text-btn-inactive'"
               title="问答模式"
             >
-              <span class="i-ph:chat-duotone text-sm" />
+              对话模式
             </button>
+            <span class="text-gray-400">|</span>
             <button 
               @click="setMode('edit')"
-              class="mode-btn"
-              :class="currentMode === 'edit' ? 'mode-btn-active' : 'mode-btn-inactive'"
+              class="mode-text-btn"
+              :class="currentMode === 'edit' ? 'mode-text-btn-active' : 'mode-text-btn-inactive'"
               title="编辑模式"
             >
-              <span class="i-ph:pencil-duotone text-sm" />
+              编辑模式
             </button>
           </div>
           
@@ -2280,6 +2281,18 @@ onUnmounted(() => {
 
 .mode-btn-inactive {
   @apply bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500;
+}
+
+.mode-text-btn {
+  @apply px-3 py-1 rounded text-sm font-medium transition-all duration-200 cursor-pointer;
+}
+
+.mode-text-btn-active {
+  @apply bg-blue-500 text-white shadow-sm;
+}
+
+.mode-text-btn-inactive {
+  @apply bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600;
 }
 </style>
 

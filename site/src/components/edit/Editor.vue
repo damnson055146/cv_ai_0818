@@ -83,15 +83,6 @@
       </ClientOnly>
       <div ref="editorRef" class="flex-1 min-w-0 min-h-0 overflow-auto" h-full />
       
-      <!-- Fix-in-Chat 悬浮按钮 -->
-      <div 
-        v-if="fixButtonVisible" 
-        :style="fixButtonStyle"
-        class="fixed z-50 bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded-lg text-sm cursor-pointer shadow-lg transition-all duration-200"
-        @click="handleFixInChat"
-      >
-        🔧 Fix in Chat
-      </div>
     </div>
   </div>
   
@@ -169,8 +160,6 @@ onMounted(async () => {
       refreshSidebarState();
       // 更新工作区选区信息
       updateWorkspaceSelection();
-      // 检查选区变化，显示/隐藏 Fix-in-Chat 按钮
-      updateFixButtonVisibility();
       // 发送选区变化事件给聊天框
       notifySelectionChanged();
     });
@@ -238,11 +227,6 @@ onBeforeUnmount(() => {
   editor?.dispose();
 });
 
-// Fix-in-Chat 状态管理
-const fixButtonVisible = ref(false);
-const fixButtonStyle = ref({});
-const selectedTextForFix = ref('');
-const selectionPosition = ref<{startLine: number, startColumn: number, endLine: number, endColumn: number} | null>(null);
 
 // Watch the updates of editor content on other places
 const { data, toggleMdFlag, toggleCssFlag } = useDataStore();
@@ -1407,163 +1391,6 @@ const insertTemplate = (type: 'internship-title' | 'internship-entry' | 'campus-
   ]);
 };
 
-// Fix-in-Chat 相关函数
-/**
- * 更新 Fix-in-Chat 按钮的显示状态和位置
- */
-const updateFixButtonVisibility = () => {
-  console.log('[Fix-in-Chat] updateFixButtonVisibility 被调用');
-  
-  if (!editor) {
-    console.log('[Fix-in-Chat] editor 未初始化');
-    return;
-  }
-  
-  const ed = editor.editor;
-  const selection = ed.getSelection();
-  const model = ed.getModel();
-  
-  console.log('[Fix-in-Chat] 选区检查:', { 
-    hasSelection: !!selection, 
-    hasModel: !!model, 
-    isEmpty: selection?.isEmpty()
-  });
-  
-  if (!selection || !model || selection.isEmpty()) {
-    console.log('[Fix-in-Chat] 隐藏按钮：无选区');
-    fixButtonVisible.value = false;
-    selectedTextForFix.value = '';
-    selectionPosition.value = null;
-    return;
-  }
-  
-  // 获取选中的文本
-  const selectedText = model.getValueInRange(selection);
-  console.log('[Fix-in-Chat] 选中的文本:', selectedText);
-  
-  if (!selectedText.trim()) {
-    console.log('[Fix-in-Chat] 隐藏按钮：选中文本为空');
-    fixButtonVisible.value = false;
-    selectedTextForFix.value = '';
-    selectionPosition.value = null;
-    return;
-  }
-  
-  // 保存选中文本和位置信息
-  selectedTextForFix.value = selectedText;
-  selectionPosition.value = {
-    startLine: selection.startLineNumber,
-    startColumn: selection.startColumn,
-    endLine: selection.endLineNumber,
-    endColumn: selection.endColumn
-  };
-  
-  // 计算按钮位置（选区右下角附近）
-  const endPosition = ed.getScrolledVisiblePosition({
-    lineNumber: selection.endLineNumber,
-    column: selection.endColumn
-  });
-  
-  if (endPosition) {
-    const editorDom = ed.getDomNode();
-    const editorRect = editorDom?.getBoundingClientRect();
-    
-    console.log('[Fix-in-Chat] 位置计算:', {
-      endPosition,
-      editorRect: editorRect ? { 
-        left: editorRect.left, 
-        top: editorRect.top, 
-        width: editorRect.width, 
-        height: editorRect.height 
-      } : null
-    });
-    
-    if (editorRect) {
-      const buttonLeft = editorRect.left + endPosition.left + 10;
-      const buttonTop = editorRect.top + endPosition.top + 25;
-      
-      fixButtonStyle.value = {
-        left: `${buttonLeft}px`,
-        top: `${buttonTop}px`
-      };
-      fixButtonVisible.value = true;
-      
-      console.log('[Fix-in-Chat] 显示按钮在:', fixButtonStyle.value);
-    }
-  } else {
-    console.log('[Fix-in-Chat] 无法获取选区位置');
-  }
-};
-
-/**
- * 处理 Fix-in-Chat 按钮点击
- */
-const handleFixInChat = () => {
-  if (!selectedTextForFix.value || !selectionPosition.value) {
-    console.warn('[Fix-in-Chat] 没有选中的文本');
-    return;
-  }
-  
-  console.log('[Fix-in-Chat] 启动修复模式', {
-    selectedText: selectedTextForFix.value,
-    position: selectionPosition.value
-  });
-  
-  // 发送事件给 Chatbot 组件，启动 Fix-in-Chat 模式
-  const fixEvent = new CustomEvent('start-fix-in-chat', {
-    detail: {
-      selectedText: selectedTextForFix.value,
-      position: selectionPosition.value,
-      context: extractSelectionContext()
-    }
-  });
-  
-  window.dispatchEvent(fixEvent);
-  
-  // 隐藏按钮
-  fixButtonVisible.value = false;
-};
-
-/**
- * 提取选区的上下文（前后几行）
- */
-const extractSelectionContext = () => {
-  if (!editor || !selectionPosition.value) return {};
-  
-  const model = editor.editor.getModel();
-  if (!model) return {};
-  
-  const { startLine, endLine } = selectionPosition.value;
-  const totalLines = model.getLineCount();
-  
-  // 提取前后各3行作为上下文
-  const contextLines = 3;
-  const beforeStart = Math.max(1, startLine - contextLines);
-  const afterEnd = Math.min(totalLines, endLine + contextLines);
-  
-  const beforeContext = beforeStart < startLine ? 
-    model.getValueInRange({
-      startLineNumber: beforeStart,
-      startColumn: 1,
-      endLineNumber: startLine - 1,
-      endColumn: model.getLineMaxColumn(startLine - 1)
-    }) : '';
-    
-  const afterContext = afterEnd > endLine ?
-    model.getValueInRange({
-      startLineNumber: endLine + 1,
-      startColumn: 1,
-      endLineNumber: afterEnd,
-      endColumn: model.getLineMaxColumn(afterEnd)
-    }) : '';
-  
-  return {
-    beforeContext,
-    afterContext,
-    selectedLine: startLine,
-    totalLines
-  };
-};
 
 /**
  * 处理应用 Fix-in-Chat 建议事件

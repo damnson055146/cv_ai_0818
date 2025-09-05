@@ -1,19 +1,38 @@
 <template>
-  <button class="round-btn" @click="save">
-    <span i-ic:baseline-save md:text-lg />
-  </button>
+  <div class="flex space-x-2">
+    <button class="round-btn" @click="save" title="保存">
+      <span i-ic:baseline-save md:text-lg />
+    </button>
+    <button class="round-btn" @click="showVersionHistory" title="版本历史">
+      <span i-ic:round-history md:text-lg />
+    </button>
+    
+    <!-- 版本历史组件 -->
+    <VersionHistoryWidget ref="versionHistoryRef" />
+  </div>
 </template>
 
 <script lang="ts" setup>
+import { ref } from 'vue'
 import { useShortcuts } from "@renovamen/vue-shortcuts";
 import type { ResumeStorageItem } from "~/types";
 import { useRoute } from 'vue-router'
 import { UpdateManager } from '~/data/updateManager'
+import VersionHistoryWidget from "~/components/shared/VersionHistoryWidget.vue";
 
 const { data } = useDataStore();
 const { styles } = useStyleStore();
 const route = useRoute()
 const updateMgr = new UpdateManager()
+
+const versionHistoryRef = ref<InstanceType<typeof VersionHistoryWidget> | null>(null)
+
+const showVersionHistory = () => {
+  if (versionHistoryRef.value) {
+    // 调用版本历史组件的显示方法
+    (versionHistoryRef.value as any).show?.()
+  }
+}
 
 const save = () => {
   const id = data.curResumeId;

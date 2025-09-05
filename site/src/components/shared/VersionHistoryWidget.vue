@@ -204,11 +204,24 @@ function onDragEnd() {
   window.removeEventListener('pointerup', onDragEnd)
   savePosition()
 }
+
+// 暴露给父组件的方法
+function show() {
+  visible.value = true
+  loadVersions()
+  ensureInitialPosition()
+}
+
+// 暴露方法给父组件使用
+defineExpose({
+  show
+})
 </script>
 
 <template>
-  <!-- 右上角浮动图标按钮 -->
+  <!-- 右上角浮动图标按钮（现在隐藏，通过工具栏调用） -->
   <button
+    v-show="false"
     class="vhw-btn"
     title="版本历史"
     @click="visible = !visible; if (visible) { loadVersions(); ensureInitialPosition(); }"
