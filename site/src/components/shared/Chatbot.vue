@@ -344,10 +344,15 @@ const diffPreviewVisible = ref(false);
 const fixOriginalText = ref('');
 const fixSuggestedText = ref('');
 const fixContextInfo = ref<SelectionContext | undefined>();
-const fixPosition = ref<{startLine: number, startColumn: number, endLine: number, endColumn: number} | null>(null);
+// 兼容两种定位：行列 或 绝对偏移
+const fixPosition = ref<
+  | { startLine: number; startColumn: number; endLine: number; endColumn: number }
+  | { start: number; end: number }
+  | null
+>(null);
 const fixMode = ref(false); // 是否在 Fix-in-Chat 模式
 
-// UpdateManager 实例用于撤销/重做
+// UpdateManager 实例
 const updateManager = new UpdateManager();
 
 // 选中文本卡片状态
@@ -437,11 +442,10 @@ async function handleSend() {
       // 自动启动 Fix-in-Chat 模式
       fixMode.value = true;
       fixOriginalText.value = workspaceStore.state.currentSelection.text;
+      // 使用绝对偏移，交由 Editor 将其转换为行列范围，确保按预定位置替换
       fixPosition.value = {
-        startLine: workspaceStore.state.currentSelection.startLine,
-        startColumn: workspaceStore.state.currentSelection.startColumn,
-        endLine: workspaceStore.state.currentSelection.endLine,
-        endColumn: workspaceStore.state.currentSelection.endColumn
+        start: workspaceStore.state.currentSelection.start,
+        end: workspaceStore.state.currentSelection.end
       };
       
       const handled = await processFixInChatMessage(text);
@@ -509,20 +513,8 @@ function resetInputHeight() {
 async function simulateAssistant(userText: string) {
   console.log(`[Chatbot] 处理用户输入 - 模式: ${currentMode.value}`)
   
-  // 检查是否为撤销/重做命令
+  // 检查其他命令（撤销/重做功能已删除）
   const lowerText = userText.toLowerCase().trim();
-  if (lowerText === '撤销' || lowerText === 'undo' || lowerText === '回退') {
-    await handleUndoCommand();
-    return;
-  }
-  if (lowerText === '重做' || lowerText === 'redo' || lowerText === '恢复') {
-    await handleRedoCommand();
-    return;
-  }
-  if (lowerText === '撤销历史' || lowerText === 'undo history' || lowerText === '历史记录') {
-    showUndoHistory();
-    return;
-  }
   if (lowerText === '选中文本' || lowerText === '当前选中' || lowerText === 'selection' || lowerText === '选区') {
     showCurrentSelection();
     return;
@@ -1882,7 +1874,7 @@ async function processFixInChatMessage(userText: string) {
           contentType: context.contentType
         }
       }
-    });
+    }) as any;
     
     console.log('[Fix-in-Chat] API 响应:', response);
     
@@ -1901,11 +1893,11 @@ async function processFixInChatMessage(userText: string) {
     }
     
     return true;
-  } catch (error) {
+  } catch (error: any) {
     console.error('[Fix-in-Chat] 处理失败:', error);
     pushMessage({
       role: 'assistant',
-      content: `❌ Fix-in-Chat 处理失败: ${error.message}`
+      content: `❌ Fix-in-Chat 处理失败: ${error?.message || String(error)}`
     });
     return false;
   }
@@ -1954,16 +1946,7 @@ async function applyFixSuggestion() {
   }
   
   try {
-    // 记录撤销历史
-    const currentDocumentId = useDataStore().data.curResumeId || 'default';
-    updateManager.recordUndoableOperation({
-      documentId: String(currentDocumentId),
-      operationType: 'fix-in-chat',
-      position: fixPosition.value,
-      oldText: fixOriginalText.value,
-      newText: fixSuggestedText.value,
-      description: `Fix-in-Chat 修改 (${fixOriginalText.value.length} → ${fixSuggestedText.value.length} 字符)`
-    });
+    // 应用修改（撤销功能已删除）
     
     // 发送应用事件给编辑器
     const applyEvent = new CustomEvent('apply-fix-suggestion', {
@@ -1980,11 +1963,10 @@ async function applyFixSuggestion() {
     diffPreviewVisible.value = false;
     resetFixMode();
     
-    // 显示成功消息，包含撤销提示
-    const undoStatus = updateManager.getUndoRedoStatus();
+    // 显示成功消息
     pushMessage({
       role: 'assistant',
-      content: `✅ 修改已应用到文档中！\n\n💡 提示：您可以输入 "撤销" 来撤销刚才的修改。当前有 ${undoStatus.undoCount} 个可撤销的操作。`
+      content: `✅ 修改已应用到文档中！`
     });
     
   } catch (error) {
@@ -2027,113 +2009,7 @@ function resetFixMode() {
   fixPosition.value = null;
 }
 
-// ====== 撤销/重做命令处理 ======
-
-/**
- * 处理撤销命令
- */
-async function handleUndoCommand() {
-  try {
-    const result = await updateManager.undoLastOperation();
-    
-    if (result.success && result.item) {
-      // 发送撤销事件给编辑器
-      const undoEvent = new CustomEvent('apply-fix-suggestion', {
-        detail: {
-          position: result.item.position,
-          newText: result.item.oldText, // 使用原文本
-          originalText: result.item.newText
-        }
-      });
-      
-      window.dispatchEvent(undoEvent);
-      
-      const undoStatus = updateManager.getUndoRedoStatus();
-      pushMessage({
-        role: 'assistant',
-        content: `↩️ 已撤销操作: ${result.item.description}\n\n当前还有 ${undoStatus.undoCount} 个可撤销的操作，${undoStatus.redoCount} 个可重做的操作。`
-      });
-    } else {
-      pushMessage({
-        role: 'assistant',
-        content: `❌ ${result.error || '没有可撤销的操作'}`
-      });
-    }
-  } catch (error) {
-    console.error('[Chatbot] 撤销操作失败:', error);
-    pushMessage({
-      role: 'assistant',
-      content: `❌ 撤销操作失败: ${error.message}`
-    });
-  }
-}
-
-/**
- * 处理重做命令
- */
-async function handleRedoCommand() {
-  try {
-    const result = await updateManager.redoLastOperation();
-    
-    if (result.success && result.item) {
-      // 发送重做事件给编辑器
-      const redoEvent = new CustomEvent('apply-fix-suggestion', {
-        detail: {
-          position: result.item.position,
-          newText: result.item.oldText, // 重做时使用 oldText
-          originalText: result.item.newText
-        }
-      });
-      
-      window.dispatchEvent(redoEvent);
-      
-      const undoStatus = updateManager.getUndoRedoStatus();
-      pushMessage({
-        role: 'assistant',
-        content: `↪️ 已重做操作: ${result.item.description}\n\n当前还有 ${undoStatus.undoCount} 个可撤销的操作，${undoStatus.redoCount} 个可重做的操作。`
-      });
-    } else {
-      pushMessage({
-        role: 'assistant',
-        content: `❌ ${result.error || '没有可重做的操作'}`
-      });
-    }
-  } catch (error) {
-    console.error('[Chatbot] 重做操作失败:', error);
-    pushMessage({
-      role: 'assistant',
-      content: `❌ 重做操作失败: ${error.message}`
-    });
-  }
-}
-
-/**
- * 显示撤销历史
- */
-function showUndoHistory() {
-  const undoStatus = updateManager.getUndoRedoStatus();
-  
-  let historyMessage = `📝 撤销/重做状态:\n\n`;
-  historyMessage += `• 可撤销操作: ${undoStatus.undoCount} 个\n`;
-  historyMessage += `• 可重做操作: ${undoStatus.redoCount} 个\n\n`;
-  
-  if (undoStatus.undoCount === 0 && undoStatus.redoCount === 0) {
-    historyMessage += `暂无历史记录。\n\n`;
-  } else {
-    historyMessage += `💡 使用方法:\n`;
-    if (undoStatus.undoCount > 0) {
-      historyMessage += `• 输入 "撤销" 撤销上一个操作\n`;
-    }
-    if (undoStatus.redoCount > 0) {
-      historyMessage += `• 输入 "重做" 重做上一个撤销的操作\n`;
-    }
-  }
-  
-  pushMessage({
-    role: 'assistant',
-    content: historyMessage
-  });
-}
+// ====== 撤销/重做功能已删除 ======
 
 /**
  * 显示当前选中的文本
@@ -2157,7 +2033,7 @@ async function showCurrentSelection() {
     
     if (selection.hasSelection && selection.text) {
       message += `• 选中文本长度: ${selection.text.length} 字符\n`;
-      message += `• 选中位置: 第${selection.startLine}行 第${selection.startColumn}列 到 第${selection.endLine}行 第${selection.endColumn}列\n\n`;
+      message += `• 选中位置: ${selection.start} 到 ${selection.end}\n\n`;
       message += `📝 选中的内容:\n`;
       message += `\`\`\`\n${selection.text}\`\`\`\n\n`;
       

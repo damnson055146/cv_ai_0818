@@ -1418,13 +1418,36 @@ const handleApplyFixSuggestion = (event: any) => {
       return;
     }
     
-    // 构建 Monaco 选择范围
-    const range = new (window as any).monaco.Range(
-      position.startLine,
-      position.startColumn,
-      position.endLine,
-      position.endColumn
-    );
+    // 构建 Monaco 选择范围（支持两种定位方式：行列 或 绝对偏移）
+    let range: any
+    const hasLineColumn = typeof position.startLine === 'number' && typeof position.startColumn === 'number'
+      && typeof position.endLine === 'number' && typeof position.endColumn === 'number'
+    if (hasLineColumn) {
+      range = new (window as any).monaco.Range(
+        position.startLine,
+        position.startColumn,
+        position.endLine,
+        position.endColumn
+      );
+    } else if (typeof position.start === 'number' && typeof position.end === 'number') {
+      // 绝对偏移安全转换为行列
+      const totalLen = typeof (model as any).getValueLength === 'function'
+        ? (model as any).getValueLength()
+        : model.getValue().length
+      const startOffset = Math.max(0, Math.min(position.start, totalLen))
+      const endOffset = Math.max(0, Math.min(position.end, totalLen))
+      const startPos = model.getPositionAt(startOffset)
+      const endPos = model.getPositionAt(Math.max(endOffset, startOffset))
+      range = new (window as any).monaco.Range(
+        startPos.lineNumber,
+        startPos.column,
+        endPos.lineNumber,
+        endPos.column
+      )
+    } else {
+      console.warn('[Fix-in-Chat] 位置数据无效，既没有行列也没有绝对偏移')
+      return
+    }
     
     // 验证当前选区内容是否匹配（可选的安全检查）
     if (originalText) {
@@ -1439,11 +1462,13 @@ const handleApplyFixSuggestion = (event: any) => {
       { range, text: newText, forceMoveMarkers: true }
     ]);
     
-    // 设置光标到修改后的文本末尾
-    const newEndLine = position.startLine + (newText.split('\n').length - 1);
+    // 设置光标到修改后的文本末尾（基于最终使用的 range 起点）
+    const baseStartLine = typeof position.startLine === 'number' ? position.startLine : range.startLineNumber
+    const baseStartColumn = typeof position.startColumn === 'number' ? position.startColumn : range.startColumn
+    const newEndLine = baseStartLine + (newText.split('\n').length - 1);
     const newEndColumn = newText.includes('\n') 
       ? newText.split('\n').pop()!.length + 1
-      : position.startColumn + newText.length;
+      : baseStartColumn + newText.length;
     
     const newPosition = {
       lineNumber: newEndLine,

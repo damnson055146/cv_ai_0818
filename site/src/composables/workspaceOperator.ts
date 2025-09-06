@@ -611,12 +611,8 @@ class WorkspaceOperator {
         model: 'o3',
         input: apiPrompt,
         reasoning: { effort: 'medium' },
-        max_output_tokens: 2048,
-        meta: {
-          target,
-          hasSelection: !!selectedText,
-          selectedPreview: selectedText?.slice(0, 120) || ''
-        }
+        max_output_tokens: 2048
+        // 移除 meta 参数，OpenAI API 不支持此参数
       }
       
       // 使用现有的API端点

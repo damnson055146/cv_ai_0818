@@ -34,12 +34,10 @@ export interface SelectionContext {
 
 export interface ContextExtractorInput {
   selectedText: string;
-  position: {
-    startLine: number;
-    startColumn: number;
-    endLine: number;
-    endColumn: number;
-  };
+  // 支持两种定位：行列 或 绝对偏移
+  position:
+    | { startLine: number; startColumn: number; endLine: number; endColumn: number }
+    | { start: number; end: number };
   beforeContext: string;
   afterContext: string;
   fullDocument: string;
@@ -59,9 +57,12 @@ export class ContextExtractor {
     } = input;
 
     // 基础上下文
+    // 归一化 position 为行列
+    const norm = this.normalizePosition(position, fullDocument)
+    
     const context: SelectionContext = {
       selectedText,
-      position,
+      position: norm,
       beforeContext,
       afterContext
     };
@@ -85,9 +86,47 @@ export class ContextExtractor {
     context.indentLevel = this.analyzeIndentLevel(selectedText);
     
     // 判断行类型
-    context.lineType = position.startLine === position.endLine ? 'single' : 'multi';
+    context.lineType = norm.startLine === norm.endLine ? 'single' : 'multi';
 
     return context;
+  }
+
+  /**
+   * 将 position 统一转换为行列
+   */
+  private normalizePosition(
+    position: ContextExtractorInput['position'],
+    fullDocument: string
+  ): { startLine: number; startColumn: number; endLine: number; endColumn: number } {
+    // 如果已是行列，直接返回
+    if (
+      (position as any).startLine !== undefined &&
+      (position as any).startColumn !== undefined &&
+      (position as any).endLine !== undefined &&
+      (position as any).endColumn !== undefined
+    ) {
+      return position as any
+    }
+
+    // 偏移到行列
+    const { start, end } = position as any
+    const safeStart = Math.max(0, Math.min(typeof start === 'number' ? start : 0, fullDocument.length))
+    const safeEnd = Math.max(0, Math.min(typeof end === 'number' ? end : fullDocument.length, fullDocument.length))
+
+    // 手动将偏移转为行列
+    const sliceTo = (offset: number) => fullDocument.slice(0, offset)
+    const startText = sliceTo(safeStart)
+    const endText = sliceTo(Math.max(safeEnd, safeStart))
+
+    const startLine = (startText.match(/\n/g)?.length || 0) + 1
+    const lastNlStart = startText.lastIndexOf('\n')
+    const startColumn = safeStart - (lastNlStart >= 0 ? lastNlStart + 1 : 0) + 1
+
+    const endLine = (endText.match(/\n/g)?.length || 0) + 1
+    const lastNlEnd = endText.lastIndexOf('\n')
+    const endColumn = Math.max(safeEnd, safeStart) - (lastNlEnd >= 0 ? lastNlEnd + 1 : 0) + 1
+
+    return { startLine, startColumn, endLine, endColumn }
   }
 
   /**
