@@ -1,2 +1,0 @@
-扁平化、避免图结构、序列化parse、wirte全部改为append、content设计、避免嵌套、rangeposition字符编码信息长度显式定义、明文存储；
-简单可靠化设计。泳道图 UML FLowChart
