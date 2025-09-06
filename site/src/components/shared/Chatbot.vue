@@ -175,6 +175,26 @@
             >
               简化
             </button>
+            <button
+              @click="openCustomPrompt"
+              class="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 rounded hover:bg-blue-200 dark:hover:bg-blue-700"
+            >
+              自定义
+            </button>
+          </div>
+
+          <!-- 自定义提示词输入 -->
+          <div v-if="showCustomPrompt" class="mt-2 flex items-center gap-2">
+            <input
+              id="chatbot-custom-prompt"
+              ref="customPromptInputRef"
+              v-model="customPrompt"
+              type="text"
+              class="flex-1 px-2 py-1 text-xs rounded border border-blue-200 dark:border-blue-700 bg-white dark:bg-slate-700 text-gray-800 dark:text-gray-100"
+              placeholder="输入自定义提示词，如：替换为简洁表达"
+            />
+            <button @click="confirmCustomPrompt" class="px-2 py-1 text-xs bg-blue-500 text-white rounded hover:opacity-90">确定</button>
+            <button @click="cancelCustomPrompt" class="px-2 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-500">取消</button>
           </div>
         </div>
       </div>
@@ -363,6 +383,11 @@ const currentSelectionInfo = ref({
   startLine: 0,
   endLine: 0
 });
+
+// 自定义提示词
+const showCustomPrompt = ref(false);
+const customPrompt = ref("");
+const customPromptInputRef = ref<HTMLInputElement | null>(null);
 
 const bubbleStyle = computed(() => ({
   left: bubbleX.value + "px",
@@ -2118,6 +2143,35 @@ function insertQuickCommand(command: string) {
       input.setSelectionRange(input.value.length, input.value.length);
     }
   }, 50);
+}
+
+function openCustomPrompt() {
+  showSelectionCard.value = true;
+  showCustomPrompt.value = true;
+  customPrompt.value = '';
+  setTimeout(() => customPromptInputRef.value?.focus(), 50);
+}
+
+function confirmCustomPrompt() {
+  const text = (customPrompt.value || '').trim();
+  if (!text) {
+    showCustomPrompt.value = false;
+    return;
+  }
+  draft.value = text;
+  showCustomPrompt.value = false;
+  // 聚焦主输入框
+  setTimeout(() => {
+    const input = document.querySelector('#chatbot-input') as HTMLTextAreaElement;
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }, 50);
+}
+
+function cancelCustomPrompt() {
+  showCustomPrompt.value = false;
 }
 
 function onBubbleClick() {

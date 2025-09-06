@@ -1,0 +1,9 @@
+/* Placeholder file to satisfy direct requests to /css/index.css
+   Real global styles are injected via nuxt.config.ts -> css: ["~/assets/css/index.css"].
+   Do NOT add UnoCSS @apply or imports here; public assets are served as-is.
+*/
+
+/* Minimal body rule so that requesting this file doesn't 404/500 */
+body{display:block}
+
+

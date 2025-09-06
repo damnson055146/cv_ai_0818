@@ -6,12 +6,12 @@ services:
       dockerfile: Dockerfile
     container_name: markdown-resume-app
     ports:
-      - "3000:3000"
+      - "${WEB_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
       - HOST=0.0.0.0
-      - NUXT_PUBLIC_SITE_URL=http://localhost:3000
+      - NUXT_PUBLIC_SITE_URL=${PUBLIC_URL:-http://localhost:${WEB_PORT:-3000}}
       - NUXT_APP_BASE_URL=/
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       # SiliconFlow runtime config (server key and public helpers)

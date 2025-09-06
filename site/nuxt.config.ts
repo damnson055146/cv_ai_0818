@@ -1,6 +1,7 @@
 import { pwa } from "./configs/pwa";
 import { i18n } from "./configs/i18n";
 import dotenv from "dotenv";
+import { fileURLToPath } from "node:url";
 // Prefer standard .env mechanism (works in dev and on many hosts)
 dotenv.config();
 // Also try site/configs/.env during dev/start
@@ -134,5 +135,19 @@ export default defineNuxtConfig({
   },
 
   pwa,
+
+  vite: {
+    resolve: {
+      alias: {
+        "/css": fileURLToPath(new URL("./src/assets/css", import.meta.url))
+      }
+    }
+  },
+
+  // Enable external access in dev when running locally or in Docker
+  devServer: {
+    host: process.env.HOST || '0.0.0.0',
+    port: Number(process.env.PORT || 3000)
+  },
 
 });

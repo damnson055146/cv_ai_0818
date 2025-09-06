@@ -91,6 +91,8 @@ class WorkspaceOperator {
    * 初始化事件监听器
    */
   private initializeEventListeners() {
+    // SSR guard: only attach listeners in browser
+    if (typeof window === 'undefined' || typeof document === 'undefined') return
     // 监听键盘事件
     document.addEventListener('keydown', this.handleKeyboardEvent.bind(this), true)
     document.addEventListener('keyup', this.handleKeyboardEvent.bind(this), true)
@@ -744,12 +746,14 @@ class WorkspaceOperator {
    * 销毁实例
    */
   public destroy() {
-    // 移除事件监听器
-    document.removeEventListener('keydown', this.handleKeyboardEvent.bind(this), true)
-    document.removeEventListener('keyup', this.handleKeyboardEvent.bind(this), true)
-    document.removeEventListener('mousedown', this.handleMouseEvent.bind(this), true)
-    document.removeEventListener('mouseup', this.handleMouseEvent.bind(this), true)
-    document.removeEventListener('click', this.handleMouseEvent.bind(this), true)
+    // 移除事件监听器（仅在浏览器环境）
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      document.removeEventListener('keydown', this.handleKeyboardEvent.bind(this), true)
+      document.removeEventListener('keyup', this.handleKeyboardEvent.bind(this), true)
+      document.removeEventListener('mousedown', this.handleMouseEvent.bind(this), true)
+      document.removeEventListener('mouseup', this.handleMouseEvent.bind(this), true)
+      document.removeEventListener('click', this.handleMouseEvent.bind(this), true)
+    }
     
     // 清理数据
     this.operations.clear()
