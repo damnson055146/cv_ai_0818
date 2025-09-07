@@ -47,11 +47,38 @@ function formatTime(ts: number) {
 }
 
 async function copyContent(v: DocumentVersion) {
+  const text = v?.content || ''
   try {
-    await navigator.clipboard.writeText(v.content)
-    toastApi.value?.create?.({ description: '内容已复制到剪贴板', type: 'success' })
+    if (typeof navigator !== 'undefined' && navigator.clipboard && (window as any).isSecureContext) {
+      await navigator.clipboard.writeText(text)
+      toastApi.value?.create?.({ description: '内容已复制到剪贴板', type: 'success' })
+      return
+    }
+    const ok = legacyCopyText(text)
+    toastApi.value?.create?.({ description: ok ? '内容已复制到剪贴板' : '复制失败', type: ok ? 'success' : 'error' })
   } catch (e) {
-    toastApi.value?.create?.({ description: '复制失败', type: 'error' })
+    const ok = legacyCopyText(text)
+    toastApi.value?.create?.({ description: ok ? '内容已复制到剪贴板' : '复制失败', type: ok ? 'success' : 'error' })
+  }
+}
+
+function legacyCopyText(text: string): boolean {
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', 'true')
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    ta.style.pointerEvents = 'none'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.focus()
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    return ok
+  } catch {
+    return false
   }
 }
 
