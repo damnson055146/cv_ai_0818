@@ -51,7 +51,7 @@ export default defineNuxtConfig({
       googleFontsKey: "",
       chatbot: {
         provider: "openai", // control in config file
-        model: "o3", // default model id
+        model: "gpt-5", // default model id
         // For OpenAI compatible APIs, use full endpoint path for chat completions
         // e.g. 'https://api.openai.com/v1/chat/completions'
         // or 3rd party compatible base.
@@ -83,6 +83,17 @@ export default defineNuxtConfig({
               verbosity: { type: "enum", options: ["low", "medium", "high"], default: "medium" },
               reasoning_effort: { type: "enum", options: ["low", "medium", "high"], default: "medium" }
             }
+          },
+          {
+            id: "4o",
+            label: "GPT‑4o",
+            apiBase: "https://api.openai.com/v1/chat/completions",
+            apiModel: "gpt-4o",
+            general: {
+              temperature: { min: 0, max: 2, step: 0.1, default: 1 },
+              max_tokens: { min: 16, max: 32768, step: 16, default: 2048 }
+            },
+            specific: {}
           },
           {
             id: "o3",

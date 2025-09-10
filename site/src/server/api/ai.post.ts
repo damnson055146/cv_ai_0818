@@ -95,6 +95,23 @@ export default defineEventHandler(async (event) => {
 
   const isStream = !!payload?.stream && !useResponsesApi;
 
+  // Log outgoing request summary (no secrets or long content)
+  try {
+    const payloadSummary = {
+      url,
+      model,
+      useResponsesApi,
+      hasMessages: Array.isArray(payload.messages) ? payload.messages.length : undefined,
+      inputLen: typeof payload.input === 'string' ? payload.input.length : undefined,
+      max_tokens: payload.max_tokens,
+      max_output_tokens: payload.max_output_tokens,
+      max_completion_tokens: payload.max_completion_tokens,
+      reasoning_effort: payload?.reasoning?.effort || payload?.reasoning_effort,
+      stream: !!payload.stream
+    } as Record<string, unknown>;
+    console.log('[api/ai] Sending upstream request', payloadSummary);
+  } catch {}
+
   const upstream = await fetch(url, {
     method: 'POST',
     headers: {
@@ -112,12 +129,27 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, upstream.status);
     if (contentType.includes('application/json')) {
       try {
-        return await upstream.json();
+        const data: any = await upstream.json();
+        try {
+          console.log('[api/ai] Received upstream response', {
+            status: upstream.status,
+            model: data?.model || data?.choices?.[0]?.model,
+            choices: Array.isArray(data?.choices) ? data.choices.length : undefined,
+            usage: data?.usage,
+            output_text_len: typeof data?.output_text === 'string' ? data.output_text.length : undefined,
+            content_len: typeof data?.choices?.[0]?.message?.content === 'string' ? data.choices[0].message.content.length : undefined
+          });
+        } catch {}
+        return data;
       } catch {
-        return await upstream.text();
+        const txt = await upstream.text();
+        try { console.log('[api/ai] Received upstream text', { status: upstream.status, length: txt.length }); } catch {}
+        return txt;
       }
     }
-    return await upstream.text();
+    const txt = await upstream.text();
+    try { console.log('[api/ai] Received non-JSON upstream', { status: upstream.status, length: txt.length, contentType }); } catch {}
+    return txt;
   }
 
   // If upstream is not SSE, surface JSON/text (avoid double-read in client)
@@ -127,11 +159,19 @@ export default defineEventHandler(async (event) => {
     const contentType = upstream.headers.get('content-type') || 'application/json';
     setHeader(event, 'content-type', contentType);
     try {
-      return await upstream.json();
+      const data = await upstream.json();
+      try {
+        console.log('[api/ai] Non-stream upstream response', { status: upstream.status, model: (data as any)?.model, usage: (data as any)?.usage });
+      } catch {}
+      return data;
     } catch {
-      return await upstream.text();
+      const txt = await upstream.text();
+      try { console.log('[api/ai] Non-stream upstream text', { status: upstream.status, length: txt.length }); } catch {}
+      return txt;
     }
   }
+
+  try { console.log('[api/ai] Streaming upstream response started', { status: upstream.status, model }); } catch {}
 
   if (!upstream.body) {
     setResponseStatus(event, 500);

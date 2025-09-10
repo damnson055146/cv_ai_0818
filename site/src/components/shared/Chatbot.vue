@@ -100,6 +100,22 @@
                   <option v-for="opt in gpt5Spec.reasoning_effort.options" :key="opt" :value="opt">{{ opt }}</option>
                 </select>
               </div>
+              <div class="space-y-1">
+                <label class="text-xs text-light-c inline-flex items-center gap-2">
+                  <input type="checkbox" v-model="gpt5ExtrasEnabled" class="align-middle" />
+                  <span>Send GPT‑5 extras (verbosity, reasoning_effort)</span>
+                </label>
+              </div>
+            </template>
+            <template v-else-if="selectedModel === 'o3'">
+              <div class="space-y-1">
+                <span class="text-xs text-light-c">Reasoning Effort (o3)</span>
+                <select v-model="reasoningEffort" class="rounded-md bg-dark-c border border-light-c px-2 py-2 text-sm">
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                </select>
+              </div>
             </template>
           </div>
           <div class="text-xs truncate">
@@ -302,6 +318,7 @@ const currentModel = computed(() => modelOptions.find((m) => m.id === selectedMo
 const generalSpec = computed(() => currentModel.value?.general ?? { temperature: { min: 0, max: 2, step: 0.1, default: 1 }, max_tokens: { min: 16, max: 32768, step: 16, default: 2048 } });
 const apiModel = computed(() => currentModel.value?.apiModel || selectedModel.value);
 const gpt5Spec = computed(() => (modelOptions.find((m) => m.id === "gpt-5")?.specific ?? { verbosity: { options: ["low", "medium", "high"], default: "medium" }, reasoning_effort: { options: ["low", "medium", "high"], default: "medium" } }));
+const gpt5ExtrasEnabled = useLocalStorage<boolean>("chatbot.gpt5Extras", gpt5ExtrasDefault);
 
 // Prefer global apiBase (proxy) when configured; else fallback to model's endpoint
 const effectiveApiBase = computed(() => globalApiBase || currentModel.value?.apiBase || "");
@@ -324,6 +341,8 @@ watch(currentModel, (m) => {
   if (m.id === "gpt-5") {
     verbosity.value = m.specific.verbosity.default;
     reasoningEffort.value = m.specific.reasoning_effort.default;
+  } else if (m.id === "o3") {
+    reasoningEffort.value = "medium";
   }
 });
 // Expose minimal debug helpers to the browser console
@@ -599,8 +618,17 @@ async function simulateAssistant(userText: string) {
           model: apiModel.value,
           input: buildInputFromMessages(chatMessages),
           temperature: temperature.value,
-          max_output_tokens: maxTokens.value
+          max_output_tokens: maxTokens.value,
+          reasoning: { effort: reasoningEffort.value }
         };
+        console.debug('[chatbot] request (responses)', {
+          endpoint,
+          selectedModel: selectedModel.value,
+          apiModel: apiModel.value,
+          inputLen: typeof payload.input === 'string' ? payload.input.length : 0,
+          max_output_tokens: payload.max_output_tokens,
+          reasoning_effort: payload.reasoning?.effort
+        });
         const res: any = await $fetch(endpoint, {
           method: "POST",
           headers: {
@@ -609,6 +637,12 @@ async function simulateAssistant(userText: string) {
           },
           body: { ...payload, model: selectedModel.value }
         });
+        try {
+          console.debug('[chatbot] response (responses)', {
+            model: res?.model,
+            output_text_len: typeof res?.output_text === 'string' ? res.output_text.length : undefined
+          });
+        } catch {}
         const text = sanitizeForDisplay(ensureText(normalizeResponsesOutput(res)));
         pushMessage({ role: "assistant", content: text });
       } else {
@@ -637,7 +671,21 @@ async function simulateAssistant(userText: string) {
             }
           };
         }
+        console.debug('[chatbot] request (chat.completions)', {
+          endpoint,
+          selectedModel: selectedModel.value,
+          apiModel: apiModel.value,
+          messages: payload.messages?.length,
+          max_tokens: payload.max_tokens,
+          max_completion_tokens: payload.max_completion_tokens
+        });
         const res: any = await requestChatCompletions(endpoint, payload);
+        try {
+          console.debug('[chatbot] response (chat.completions)', {
+            model: res?.model || res?.choices?.[0]?.model,
+            content_len: typeof res?.choices?.[0]?.message?.content === 'string' ? res.choices[0].message.content.length : undefined
+          });
+        } catch {}
         const text = sanitizeForDisplay(ensureText(
           res?.choices?.[0]?.message?.content ??
           res?.reply ??
@@ -727,7 +775,7 @@ async function streamChat(endpoint: string, payload: any) {
 
 // Send chat completions; for GPT-5 try extras first, then fallback if 400
 async function requestChatCompletions(endpoint: string, basePayload: any) {
-  const includeGpt5Extras = selectedModel.value === "gpt-5" && gpt5ExtrasDefault;
+  const includeGpt5Extras = selectedModel.value === "gpt-5" && gpt5ExtrasEnabled.value;
   const payloadWithExtras = includeGpt5Extras
     ? { ...basePayload, reasoning_effort: reasoningEffort.value, verbosity: verbosity.value }
     : basePayload;
@@ -922,8 +970,17 @@ async function callAiForWorkspace(prompt: string): Promise<string> {
       model: apiModel.value,
       input: prompt,
       temperature: temperature.value,
-      max_output_tokens: maxTokens.value
+      max_output_tokens: maxTokens.value,
+      reasoning: { effort: reasoningEffort.value }
     }
+    console.debug('[chatbot][workspace] request (responses)', {
+      endpoint,
+      selectedModel: selectedModel.value,
+      apiModel: apiModel.value,
+      inputLen: typeof payload.input === 'string' ? payload.input.length : 0,
+      max_output_tokens: payload.max_output_tokens,
+      reasoning_effort: payload.reasoning?.effort
+    })
     
     const res = await $fetch(endpoint, {
       method: "POST",
@@ -932,7 +989,12 @@ async function callAiForWorkspace(prompt: string): Promise<string> {
       },
       body: { ...payload, model: selectedModel.value }
     })
-    
+    try {
+      console.debug('[chatbot][workspace] response (responses)', {
+        model: (res as any)?.model,
+        output_text_len: typeof (res as any)?.output_text === 'string' ? (res as any).output_text.length : undefined
+      })
+    } catch {}
     return sanitizeForDisplay(ensureText(normalizeResponsesOutput(res)))
   } else {
     const payload = {
@@ -946,8 +1008,22 @@ async function callAiForWorkspace(prompt: string): Promise<string> {
         ? { max_completion_tokens: maxTokens.value }
         : { max_tokens: maxTokens.value })
     }
+    console.debug('[chatbot][workspace] request (chat.completions)', {
+      endpoint,
+      selectedModel: selectedModel.value,
+      apiModel: apiModel.value,
+      messages: payload.messages?.length,
+      max_tokens: (payload as any).max_tokens,
+      max_completion_tokens: (payload as any).max_completion_tokens
+    })
     
     const res: any = await requestChatCompletions(endpoint, payload)
+    try {
+      console.debug('[chatbot][workspace] response (chat.completions)', {
+        model: res?.model || res?.choices?.[0]?.model,
+        content_len: typeof res?.choices?.[0]?.message?.content === 'string' ? res.choices[0].message.content.length : undefined
+      })
+    } catch {}
     return sanitizeForDisplay(ensureText(
       res?.choices?.[0]?.message?.content ??
       res?.reply ??
@@ -1660,8 +1736,17 @@ async function executeOriginalChatLogic(userText: string) {
           model: apiModel.value,
           input: buildInputFromMessages(chatMessages),
           temperature: temperature.value,
-          max_output_tokens: maxTokens.value
+          max_output_tokens: maxTokens.value,
+          reasoning: { effort: reasoningEffort.value }
         };
+        console.debug('[chatbot] request (responses)', {
+          endpoint,
+          selectedModel: selectedModel.value,
+          apiModel: apiModel.value,
+          inputLen: typeof payload.input === 'string' ? payload.input.length : 0,
+          max_output_tokens: payload.max_output_tokens,
+          reasoning_effort: payload.reasoning?.effort
+        });
         const res: any = await $fetch(endpoint, {
           method: "POST",
           headers: {
@@ -1670,6 +1755,12 @@ async function executeOriginalChatLogic(userText: string) {
           },
           body: { ...payload, model: selectedModel.value }
         });
+        try {
+          console.debug('[chatbot] response (responses)', {
+            model: res?.model,
+            output_text_len: typeof res?.output_text === 'string' ? res.output_text.length : undefined
+          });
+        } catch {}
         const text = sanitizeForDisplay(ensureText(normalizeResponsesOutput(res)));
         pushMessage({ role: "assistant", content: text });
       } else {
@@ -1698,7 +1789,21 @@ async function executeOriginalChatLogic(userText: string) {
             }
           };
         }
+        console.debug('[chatbot] request (chat.completions)', {
+          endpoint,
+          selectedModel: selectedModel.value,
+          apiModel: apiModel.value,
+          messages: payload.messages?.length,
+          max_tokens: payload.max_tokens,
+          max_completion_tokens: payload.max_completion_tokens
+        });
         const res: any = await requestChatCompletions(endpoint, payload);
+        try {
+          console.debug('[chatbot] response (chat.completions)', {
+            model: res?.model || res?.choices?.[0]?.model,
+            content_len: typeof res?.choices?.[0]?.message?.content === 'string' ? res.choices[0].message.content.length : undefined
+          });
+        } catch {}
         const text = sanitizeForDisplay(ensureText(
           res?.choices?.[0]?.message?.content ??
           res?.reply ??
