@@ -258,6 +258,7 @@
 
 <script setup lang="ts">
 import { useLocalStorage } from "@vueuse/core";
+import { useRoute } from 'vue-router'
 import { useWorkspaceStore } from "~/composables/stores/workspace";
 import { useAiRequirementParser } from "~/composables/aiRequirementParser";
 import type { AiRequirement } from "~/composables/workspaceOperator";
@@ -267,6 +268,8 @@ import DiffPreview from "~/components/shared/DiffPreview.vue";
 import { contextExtractor } from "~/data/contextExtractor";
 import type { SelectionContext } from "~/data/contextExtractor";
 import { UpdateManager } from "~/data/updateManager";
+import { buildContext } from "~/data/contextBuilder";
+import { convStore } from "~/data/contextStore";
 
 type Role = "user" | "assistant" | "system";
 interface Message {
@@ -286,6 +289,14 @@ const messages = useLocalStorage<Message[]>(
   [{ id: 1, role: "assistant", content: "Hi! I'm your Chatbot. How can I help you today?" }]
 );
 const isThinking = ref(false);
+
+// 当前文档ID（来源于路由）
+const route = useRoute()
+const documentId = computed(() => {
+  const id = route.params?.id
+  if (Array.isArray(id)) return id[0]
+  return (id as string) || ''
+})
 
 // 模式管理
 const currentMode = useLocalStorage<'ask' | 'edit'>('chatbot.mode', 'edit');
@@ -506,11 +517,18 @@ function pushMessage(partial: Omit<Message, "id">) {
   const id = Date.now() + Math.random();
   const content = ensureText(partial.content as any);
   messages.value.push({ id, role: partial.role, content });
+  // 写入按文档分隔的对话记忆（仅本地）
+  try {
+    if (documentId.value && (partial.role === 'user' || partial.role === 'assistant')) {
+      convStore.appendMessage(documentId.value, partial.role as any, content)
+    }
+  } catch {}
   nextTick(() => scrollToBottom());
 }
 
 function clearMessages() {
   messages.value = [];
+  try { if (documentId.value) convStore.clear(documentId.value) } catch {}
 }
 
 function saveApiKey() {}
@@ -1830,14 +1848,23 @@ async function executeOriginalChatLogic(userText: string) {
 
 // Utilities to build context
 function buildChatMessages() {
+  // 优先使用按文档存储的会话与规则；无文档ID时退化为本组件的本地消息
   const base: Array<{ role: string; content: string }> = [
     { role: "system", content: SYSTEM_PROMPT }
   ];
+  if (documentId.value) {
+    const ctx = buildContext({ documentId: documentId.value, docType: 'cv', language: 'zh-cn', tailMessages: 30 })
+    if (ctx.rules && ctx.rules.trim()) {
+      base.push({ role: 'system', content: `以下是跨文档可复用的写作/格式规则，请遵守：\n${ctx.rules.trim()}` })
+    }
+    const recent = ctx.recentConversation.map((m) => ({ role: m.role, content: sanitizeForDisplay(ensureText(m.content)) }))
+    return base.concat(recent)
+  }
   const history = messages.value
     .map((m) => ({ role: m.role, content: sanitizeForDisplay(ensureText(m.content)) }))
     .filter((m) => !isHtmlLike(m.content))
-    .slice(-40); // keep last N turns to limit token usage
-  return base.concat(history);
+    .slice(-40)
+  return base.concat(history)
 }
 
 function buildInputFromMessages(msgs: Array<{ role: string; content: string }>) {
@@ -2099,11 +2126,11 @@ async function applyFixSuggestion() {
       content: `✅ 修改已应用到文档中！`
     });
     
-  } catch (error) {
+  } catch (error: any) {
     console.error('[Fix-in-Chat] 应用修复建议失败:', error);
     pushMessage({
       role: 'assistant',
-      content: `❌ 应用修改失败: ${error.message}`
+      content: `❌ 应用修改失败: ${error?.message || String(error)}`
     });
   }
 }
@@ -2188,11 +2215,11 @@ async function showCurrentSelection() {
       content: message
     });
     
-  } catch (error) {
+  } catch (error: any) {
     console.error('[Chatbot] 显示选中文本失败:', error);
     pushMessage({
       role: 'assistant',
-      content: `❌ 获取选中文本失败: ${error.message}`
+      content: `❌ 获取选中文本失败: ${error?.message || String(error)}`
     });
   }
 }
