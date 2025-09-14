@@ -50,5 +50,12 @@
     "pinia": "^2.1.7",
     "ts-debounce": "^4.0.0",
     "vue-smart-pages": "workspace:*"
+  },
+  "dependencies": {
+    "docx": "^9.5.1",
+    "html-to-docx": "^1.8.0",
+    "mammoth": "^1.10.0",
+    "pdfjs-dist": "^5.4.149",
+    "turndown": "^7.2.1"
   }
 }

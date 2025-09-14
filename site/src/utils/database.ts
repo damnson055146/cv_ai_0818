@@ -94,6 +94,24 @@ export const newResume = async (templateKey?: string) => {
 };
 
 /**
+ * Create a new resume using imported markdown content
+ */
+export const newResumeFromImport = async (content: string, name?: string) => {
+  const id = new Date().getTime().toString();
+  const resume = {
+    name: name || DEFAULT_NAME,
+    markdown: content || DEFAULT_MD_CONTENT,
+    css: DEFAULT_CSS_CONTENT,
+    styles: DEFAULT_STYLES,
+    update: id
+  } as ResumeStorageItem;
+  await saveResume(id, resume);
+  const toast = useToast();
+  toast.new();
+  return id;
+};
+
+/**
  * Download data for all resumes to a .json file
  */
 export const saveResumesToLocal = async () => {
