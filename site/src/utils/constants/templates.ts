@@ -8,6 +8,7 @@ import {
 
 export type DocumentType = "cv" | "ps" | "rec";
 export type LanguageKey = "en" | "zh";
+export type PsSubtype = "outline" | "body";
 
 export type ResumeTemplate = {
   key: string; // e.g., "cv-en"
@@ -101,6 +102,98 @@ const MD_PS_ZH = `---
 说明近期与长期的发展目标。
 `;
 
+// PS Outline (English)
+const MD_PS_OUTLINE_EN = `---
+---
+
+# PS Outline
+
+Use numbered sections and concise bullet points only. Do NOT write body paragraphs.
+
+## 1. Motivation
+- 
+- 
+
+## 2. Academic Preparation
+- 
+- 
+
+## 3. Experiences
+- 
+- 
+
+## 4. Why Master's / Why This Program
+- 
+- 
+
+## 5. Career Plan
+- 
+- 
+`;
+
+// PS Outline (Chinese)
+const MD_PS_OUTLINE_ZH = `---
+---
+
+# PS 大纲
+
+仅输出结构与要点列表，请勿撰写正文段落。
+
+## 1. 动机
+- 
+- 
+
+## 2. 学术准备
+- 
+- 
+
+## 3. 经历
+- 
+- 
+
+## 4. 为何读研 / 为何该项目
+- 
+- 
+
+## 5. 职业规划
+- 
+- 
+`;
+
+// PS Body (English)
+const MD_PS_BODY_EN = `---
+---
+
+# Personal Statement (Body)
+
+Write concise paragraphs strictly following the finalized outline. Avoid inventing facts.
+
+## [Heading from Outline]
+
+Paragraph...
+
+## [Next Heading]
+
+Paragraph...
+`;
+
+// PS Body (Chinese)
+const MD_PS_BODY_ZH = `---
+---
+
+# 个人陈述（正文）
+
+严格依据已完成的大纲撰写简洁段落，避免虚构信息。
+
+## 【来自大纲的标题】
+
+正文段落……
+
+## 【下一个标题】
+
+正文段落……
+`;
+
 // Recommendation Letter (English)
 const MD_REC_EN = `---
 ---
@@ -142,6 +235,9 @@ const MD_REC_ZH = `---
 export const buildTemplateKey = (docType: DocumentType, lang: LanguageKey) =>
   `${docType}-${lang}`;
 
+export const buildPsTemplateKey = (lang: LanguageKey, sub: PsSubtype) =>
+  `ps-${sub}-${lang}`;
+
 export const TEMPLATE_LIST: ResumeTemplate[] = [
   // CV
   { key: buildTemplateKey("cv", "en"), docType: "cv", lang: "en", name: DEFAULT_NAME, markdown: MD_CV_EN, css: DEFAULT_CSS_CONTENT, styles: DEFAULT_STYLES },
@@ -149,6 +245,11 @@ export const TEMPLATE_LIST: ResumeTemplate[] = [
   // Personal Statement
   { key: buildTemplateKey("ps", "en"), docType: "ps", lang: "en", name: "Personal Statement", markdown: MD_PS_EN, css: DEFAULT_CSS_CONTENT, styles: DEFAULT_STYLES },
   { key: buildTemplateKey("ps", "zh"), docType: "ps", lang: "zh", name: "个人陈述", markdown: MD_PS_ZH, css: DEFAULT_CSS_CONTENT, styles: DEFAULT_STYLES },
+  // Personal Statement Subtypes (Outline / Body)
+  { key: buildPsTemplateKey("en", "outline"), docType: "ps", lang: "en", name: "PS Outline", markdown: MD_PS_OUTLINE_EN, css: DEFAULT_CSS_CONTENT, styles: DEFAULT_STYLES },
+  { key: buildPsTemplateKey("zh", "outline"), docType: "ps", lang: "zh", name: "PS 大纲", markdown: MD_PS_OUTLINE_ZH, css: DEFAULT_CSS_CONTENT, styles: DEFAULT_STYLES },
+  { key: buildPsTemplateKey("en", "body"), docType: "ps", lang: "en", name: "PS Body", markdown: MD_PS_BODY_EN, css: DEFAULT_CSS_CONTENT, styles: DEFAULT_STYLES },
+  { key: buildPsTemplateKey("zh", "body"), docType: "ps", lang: "zh", name: "PS 正文", markdown: MD_PS_BODY_ZH, css: DEFAULT_CSS_CONTENT, styles: DEFAULT_STYLES },
   // Recommendation Letter
   { key: buildTemplateKey("rec", "en"), docType: "rec", lang: "en", name: "Recommendation Letter", markdown: MD_REC_EN, css: DEFAULT_CSS_CONTENT, styles: DEFAULT_STYLES },
   { key: buildTemplateKey("rec", "zh"), docType: "rec", lang: "zh", name: "推荐信", markdown: MD_REC_ZH, css: DEFAULT_CSS_CONTENT, styles: DEFAULT_STYLES }

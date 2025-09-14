@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { FlatStorageManager } from '~/data/storage'
 import type { DocumentVersion } from '~/data/ds'
 import { useNuxtApp } from '#app'
+import { setResumeMd } from '~/utils/database'
 
 const route = useRoute()
 const visible = ref(false)
@@ -46,39 +47,16 @@ function formatTime(ts: number) {
   try { return new Date(ts).toLocaleString() } catch { return String(ts) }
 }
 
-async function copyContent(v: DocumentVersion) {
-  const text = v?.content || ''
+function rollbackTo(v: DocumentVersion) {
   try {
-    if (typeof navigator !== 'undefined' && navigator.clipboard && (window as any).isSecureContext) {
-      await navigator.clipboard.writeText(text)
-      toastApi.value?.create?.({ description: '内容已复制到剪贴板', type: 'success' })
-      return
+    // 通知编辑器：下次 onDidChangeModelContent 不要生成 direct_edit 版本
+    if (typeof document !== 'undefined') {
+      document.dispatchEvent(new CustomEvent('suppress-direct-version-once'))
     }
-    const ok = legacyCopyText(text)
-    toastApi.value?.create?.({ description: ok ? '内容已复制到剪贴板' : '复制失败', type: ok ? 'success' : 'error' })
-  } catch (e) {
-    const ok = legacyCopyText(text)
-    toastApi.value?.create?.({ description: ok ? '内容已复制到剪贴板' : '复制失败', type: ok ? 'success' : 'error' })
-  }
-}
-
-function legacyCopyText(text: string): boolean {
-  try {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.setAttribute('readonly', 'true')
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    ta.style.pointerEvents = 'none'
-    ta.style.left = '-9999px'
-    document.body.appendChild(ta)
-    ta.focus()
-    ta.select()
-    const ok = document.execCommand('copy')
-    document.body.removeChild(ta)
-    return ok
-  } catch {
-    return false
+    setResumeMd(v?.content || '')
+    toastApi.value?.create?.({ description: '已回退到该版本', type: 'success' })
+  } catch (e: any) {
+    toastApi.value?.create?.({ description: e?.message || '回退失败', type: 'error' })
   }
 }
 
@@ -283,7 +261,7 @@ defineExpose({
         <li v-for="v in visibleVersions" :key="v.id" class="vhw-item">
           <div class="vhw-item-row">
             <div class="vhw-item-title">#{{ v.versionNumber }} · {{ v.operationType }} · {{ formatTime(v.timestamp) }}</div>
-            <button class="vhw-mini" @click="copyContent(v)">复制内容</button>
+            <button class="vhw-mini" @click="rollbackTo(v)">回退</button>
           </div>
           <div class="vhw-meta">来源: {{ v.operationSource }} · 变更: +{{ v.charactersAdded }} / -{{ v.charactersRemoved }}</div>
           <details class="vhw-details">

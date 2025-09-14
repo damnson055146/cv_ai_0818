@@ -50,6 +50,8 @@ export const setResume = (id: string, resume: ResumeStorageItem) => {
 
   setData("curResumeId", id);
   setData("curResumeName", resume.name);
+  // Suppress one-shot direct version append when programmatically switching documents (e.g., PS outline/body)
+  try { if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('suppress-direct-version-once')) } catch {}
   setResumeMd(resume.markdown);
   setResumeCss(resume.css);
   setResumeStyles(resume.styles);

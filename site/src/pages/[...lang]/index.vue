@@ -5,11 +5,15 @@
     <div class="max-w-306 mx-auto px-5 py-16 text-dark-c">
       <div class="space-y-2 md:(hstack justify-between)">
         <h1 font-bold text-3xl>{{ $t("resumes.my_resumes") }}</h1>
-        <FileOptions @update="loadResumes" />
+        <ClientOnly>
+          <FileOptions @update="loadResumes" />
+        </ClientOnly>
       </div>
 
       <div class="flex flex-wrap gap-x-4 gap-y-8 mt-8">
-        <NewResume />
+        <ClientOnly>
+          <NewResume />
+        </ClientOnly>
         <ResumeItem
           v-for="resume in list"
           :key="resume.id"

@@ -153,6 +153,11 @@ onMounted(async () => {
   if (isClient && editorRef.value && !editor) {
     editor = await setupMonacoEditor(editorRef.value);
     activate("markdown");
+    // 限定工作区事件边界到编辑器容器，避免全局多余触发
+    try {
+      const operator = useWorkspaceOperator();
+      operator.setEventBoundary(editorRef.value);
+    } catch {}
     
     // bind listeners for sidebar state
     const ed = editor.editor;
@@ -168,11 +173,23 @@ onMounted(async () => {
 
     // Direct edit → debounce to append version
     let directTimer: any = null;
+    let suppressDirectVersionOnce = false;
+    const suppressHandler = () => { suppressDirectVersionOnce = true; };
+    document.addEventListener('suppress-direct-version-once', suppressHandler);
+    (ed as any)._mdr_suppressHandler = suppressHandler;
     let prevContent = ed.getModel()?.getValue() || "";
     ed.onDidChangeModelContent(() => {
       const model = ed.getModel();
       if (!model) return;
       const current = model.getValue();
+      // 如果内容未变化（例如光标/选择变更），不触发保存排队
+      if (current === prevContent) return;
+      // Suppress one-shot version append for programmatic updates (e.g., rollback)
+      if (suppressDirectVersionOnce) {
+        suppressDirectVersionOnce = false;
+        prevContent = current;
+        return;
+      }
       if (directTimer) clearTimeout(directTimer);
       directTimer = setTimeout(async () => {
         const id = (useDataStore().data.curResumeId as any) || "";
@@ -223,7 +240,13 @@ onBeforeUnmount(() => {
     const ed = editor.editor as any;
     if (ed._mdr_pasteHandler) window.removeEventListener('paste', ed._mdr_pasteHandler, true);
     if (ed._mdr_keydownFocusForPaste) window.removeEventListener('keydown', ed._mdr_keydownFocusForPaste, true);
+    if (ed._mdr_suppressHandler) document.removeEventListener('suppress-direct-version-once', ed._mdr_suppressHandler);
   }
+  // 恢复默认事件边界，防止遗留到文档外的实例
+  try {
+    const operator = useWorkspaceOperator();
+    operator.clearEventBoundary();
+  } catch {}
   editor?.dispose();
 });
 

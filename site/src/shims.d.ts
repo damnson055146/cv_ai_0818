@@ -17,3 +17,9 @@ declare module "*.vue" {
 declare module "@vue/runtime-dom" {
   interface HTMLAttributes extends AttributifyAttributes {}
 }
+
+// PDF.js ESM worker url import
+declare module 'pdfjs-dist/build/pdf.worker.mjs?url' {
+  const url: string
+  export default url
+}

@@ -76,6 +76,11 @@ class WorkspaceOperator {
   // 工作区状态引用（用于获取选中文本等）
   private workspaceState: any = null
   
+  // 事件绑定根节点与已绑定的处理器引用（用于正确解绑）
+  private eventRoot: Document | HTMLElement | null = null
+  private boundKeyboardHandler: ((e: KeyboardEvent) => void) | null = null
+  private boundMouseHandler: ((e: MouseEvent) => void) | null = null
+  
   constructor() {
     this.initializeEventListeners()
   }
@@ -93,14 +98,61 @@ class WorkspaceOperator {
   private initializeEventListeners() {
     // SSR guard: only attach listeners in browser
     if (typeof window === 'undefined' || typeof document === 'undefined') return
-    // 监听键盘事件
-    document.addEventListener('keydown', this.handleKeyboardEvent.bind(this), true)
-    document.addEventListener('keyup', this.handleKeyboardEvent.bind(this), true)
-    
-    // 监听鼠标事件
-    document.addEventListener('mousedown', this.handleMouseEvent.bind(this), true)
-    document.addEventListener('mouseup', this.handleMouseEvent.bind(this), true)
-    document.addEventListener('click', this.handleMouseEvent.bind(this), true)
+    // 默认将事件边界设置为 document（后续可通过 setEventBoundary 调整到具体容器）
+    this.setEventBoundary(document)
+  }
+
+  /**
+   * 设置事件监听边界（仅在该根节点内的事件才会被处理）
+   */
+  public setEventBoundary(root: HTMLElement | Document | null) {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return
+    const newRoot = root || document
+    // 如果边界未变化，则不重复绑定
+    if (this.eventRoot === newRoot && this.boundKeyboardHandler && this.boundMouseHandler) return
+
+    // 先从旧的根节点解绑
+    this.detachEventListeners()
+
+    // 绑定到新的根节点
+    this.eventRoot = newRoot
+    this.boundKeyboardHandler = this.handleKeyboardEvent.bind(this)
+    this.boundMouseHandler = this.handleMouseEvent.bind(this)
+
+    // 键盘事件：使用冒泡阶段（更自然，避免捕获阶段过度拦截）
+    this.eventRoot.addEventListener('keydown', this.boundKeyboardHandler, false)
+    this.eventRoot.addEventListener('keyup', this.boundKeyboardHandler, false)
+
+    // 鼠标事件：使用冒泡阶段并限制到边界内
+    this.eventRoot.addEventListener('mousedown', this.boundMouseHandler, false)
+    this.eventRoot.addEventListener('mouseup', this.boundMouseHandler, false)
+    this.eventRoot.addEventListener('click', this.boundMouseHandler, false)
+  }
+
+  /**
+   * 清除自定义边界，恢复为 document
+   */
+  public clearEventBoundary() {
+    this.setEventBoundary(document)
+  }
+
+  /**
+   * 从当前根节点解绑事件
+   */
+  private detachEventListeners() {
+    if (!this.eventRoot) return
+    if (this.boundKeyboardHandler) {
+      this.eventRoot.removeEventListener('keydown', this.boundKeyboardHandler, false)
+      this.eventRoot.removeEventListener('keyup', this.boundKeyboardHandler, false)
+    }
+    if (this.boundMouseHandler) {
+      this.eventRoot.removeEventListener('mousedown', this.boundMouseHandler, false)
+      this.eventRoot.removeEventListener('mouseup', this.boundMouseHandler, false)
+      this.eventRoot.removeEventListener('click', this.boundMouseHandler, false)
+    }
+    this.boundKeyboardHandler = null
+    this.boundMouseHandler = null
+    this.eventRoot = null
   }
 
   /**
@@ -137,7 +189,21 @@ class WorkspaceOperator {
       console.log('[WorkspaceOperator] 鼠标事件已被锁定，原因:', this.lockState.lockReason)
       return false
     }
-    
+    // 仅处理发生在边界内的事件
+    const root = this.eventRoot
+    if (root && (root as HTMLElement).contains) {
+      const rootEl = root as HTMLElement
+      const targetNode = event.target as Node | null
+      if (targetNode && !rootEl.contains(targetNode)) {
+        return
+      }
+    }
+    // 允许通过标记跳过（例如聊天组件、外层遮罩等）
+    const targetEl = event.target as HTMLElement | null
+    if (targetEl && targetEl.closest('[data-workspace-ignore="true"]')) {
+      return
+    }
+
     // 触发鼠标操作事件
     this.emitEvent('mouse', {
       type: event.type,
@@ -748,11 +814,7 @@ class WorkspaceOperator {
   public destroy() {
     // 移除事件监听器（仅在浏览器环境）
     if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-      document.removeEventListener('keydown', this.handleKeyboardEvent.bind(this), true)
-      document.removeEventListener('keyup', this.handleKeyboardEvent.bind(this), true)
-      document.removeEventListener('mousedown', this.handleMouseEvent.bind(this), true)
-      document.removeEventListener('mouseup', this.handleMouseEvent.bind(this), true)
-      document.removeEventListener('click', this.handleMouseEvent.bind(this), true)
+      this.detachEventListeners()
     }
     
     // 清理数据

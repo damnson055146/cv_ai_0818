@@ -53,7 +53,10 @@ export default defineNuxtConfig({
       googleFontsKey: "",
       chatbot: {
         provider: "openai", // control in config file
-        model: "gpt-5", // default model id
+        model: "gpt-5", // default and only model id
+        // Hide Chatbot floating bubble on specific routes (exact match)
+        // Control routes in config file as required
+        bubbleHiddenRoutes: ["/", "/en", "/sp", "/zh-cn"],
         // If true, backend will reject any edit/apply requests when client declares chat/ask mode
         strictAskNoEdit: String(process.env.NUXT_PUBLIC_CHATBOT_STRICT_ASK_NO_EDIT ?? 'true').toLowerCase() !== 'false',
         // For OpenAI compatible APIs, use full endpoint path for chat completions
@@ -87,36 +90,27 @@ export default defineNuxtConfig({
               verbosity: { type: "enum", options: ["low", "medium", "high"], default: "medium" },
               reasoning_effort: { type: "enum", options: ["low", "medium", "high"], default: "medium" }
             }
-          },
-          {
-            id: "4o",
-            label: "GPT‑4o",
-            apiBase: "https://api.openai.com/v1/chat/completions",
-            apiModel: "gpt-4o",
-            general: {
-              temperature: { min: 0, max: 2, step: 0.1, default: 1 },
-              max_tokens: { min: 16, max: 32768, step: 16, default: 2048 }
-            },
-            specific: {}
-          },
-          {
-            id: "o3",
-            label: "o3",
-            apiBase: "https://api.openai.com/v1/responses",
-            apiModel: "o3-2025-04-16",
-            general: {
-              temperature: { min: 0, max: 2, step: 0.1, default: 1 },
-              max_tokens: { min: 16, max: 32768, step: 16, default: 2048 }
-            },
-            specific: {}
-          },
-          
+          }
         ]
       } as any,
       // MCP public config for client polling
       mcp: {
         enabled: true,
         queueToken: process.env.MCP_QUEUE_TOKEN || ""
+      },
+      psPrompts: {
+        // Configure base paths via env to allow Docker/host overrides
+        baseDir: process.env.PS_PROMPTS_BASE_DIR || "C:/Users/PSJ/Desktop/bridge_to_future/cursor_ps_test/ps_test(1)/ps_test",
+        files: {
+          ps_requirement: process.env.PS_PROMPT_REQUIREMENT || "info_ps_requirement.md",
+          guidance_outline: process.env.PS_PROMPT_GUIDANCE_OUTLINE || "guidance_outline.md",
+          guidance_element: process.env.PS_PROMPT_GUIDANCE_ELEMENT || "guidance_element.md"
+        }
+      },
+      // PS creation behavior flags (controlled in config file)
+      ps: {
+        requireUpload: true,
+        allowedUploadTypes: ["application/pdf"]
       }
     }
   },

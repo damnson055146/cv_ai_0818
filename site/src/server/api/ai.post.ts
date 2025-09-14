@@ -14,37 +14,49 @@ export default defineEventHandler(async (event) => {
   const endpointHint: string | undefined = typeof reqBody?.endpoint === 'string' ? reqBody.endpoint : undefined;
   const body: any = reqBody?.body ?? reqBody;
 
-  const fallbackModel = (config.public as any)?.chatbot?.model || 'o3';
-  const model: string = typeof body?.model === 'string' && String(body.model).trim().length > 0
+  const fallbackModel = (config.public as any)?.chatbot?.model || 'gpt-5';
+  let model: string = typeof body?.model === 'string' && String(body.model).trim().length > 0
     ? String(body.model)
     : fallbackModel;
+  // Enforce gpt-5 only: normalize any incoming non-gpt-5 model to gpt-5
+  if (!/^gpt-5/i.test(model)) {
+    model = 'gpt-5';
+  }
+  if (body?.model !== model) {
+    try { body.model = model } catch {}
+  }
 
-  // Decide endpoint: prefer explicit endpoint, else infer from model id
+  // Decide endpoint: prefer explicit endpoint, else infer from model id and payload intent
+  // - Also use responses API for gpt-5 when advanced fields present (reasoning/verbosity/response_format)
+  const wantsResponses = /(^o3|\/o3-)/i.test(model)
+    || (/^gpt-5/i.test(model) && (body?.reasoning || typeof body?.verbosity !== 'undefined' || body?.response_format));
   const useResponsesApi = endpointHint
     ? endpointHint === 'responses'
-    : /(^o3|\/o3-)/i.test(model);
+    : wantsResponses;
 
   // Normalize payload per target API and model quirks
   const payload: any = { ...body, model };
-  // Normalize any invalid reasoning effort values early to avoid 400s upstream
+  // Normalize verbosity/reasoning fields per latest-model guide
   try {
     const allowedEfforts = ['low', 'medium', 'high'];
     const alias: Record<string, string> = { minimal: 'low', default: 'medium', deep: 'high' };
-    // responses API expects `reasoning: { effort }`
+    // Unify reasoning.effort
     if (payload?.reasoning && typeof payload.reasoning.effort === 'string') {
       const incoming = String(payload.reasoning.effort).toLowerCase();
       const effort = allowedEfforts.includes(incoming) ? incoming : (alias[incoming] || 'medium');
-      if (payload.reasoning.effort !== effort) {
-        payload.reasoning.effort = effort;
-      }
+      payload.reasoning.effort = effort;
     }
-    // Some clients may mistakenly send `reasoning_effort` (GPT‑5 style)
     if (typeof payload?.reasoning_effort === 'string') {
       const incoming = String(payload.reasoning_effort).toLowerCase();
       const effort = allowedEfforts.includes(incoming) ? incoming : (alias[incoming] || 'medium');
       payload.reasoning = payload.reasoning || {};
       payload.reasoning.effort = effort;
       delete payload.reasoning_effort;
+    }
+    // Normalize verbosity field to allowed values if present
+    if (typeof payload?.verbosity === 'string') {
+      const v = String(payload.verbosity).toLowerCase();
+      if (!['low', 'medium', 'high'].includes(v)) payload.verbosity = 'medium';
     }
   } catch {}
   // Debug log sanitized payload intent
@@ -66,9 +78,21 @@ export default defineEventHandler(async (event) => {
         .join('\n\n');
       delete payload.messages;
     }
-    if (payload.max_tokens && !payload.max_output_tokens) {
-      payload.max_output_tokens = payload.max_tokens;
-      delete payload.max_tokens;
+    // Prefer explicit max_output_tokens; else map from max_completion_tokens or max_tokens
+    if (!payload.max_output_tokens) {
+      if (typeof payload.max_completion_tokens === 'number') {
+        payload.max_output_tokens = payload.max_completion_tokens;
+        delete payload.max_completion_tokens;
+        if (payload.max_tokens) delete payload.max_tokens;
+      } else if (typeof payload.max_tokens === 'number') {
+        payload.max_output_tokens = payload.max_tokens;
+        delete payload.max_tokens;
+      }
+    }
+    // Map GPT-5 extras: verbosity moved under text.verbosity per Responses API
+    if (typeof payload.verbosity !== 'undefined') {
+      payload.text = { ...(payload.text || {}), verbosity: payload.verbosity };
+      delete payload.verbosity;
     }
     // responses API does not support stream in our flow
     if (payload.stream) delete payload.stream;
@@ -80,6 +104,17 @@ export default defineEventHandler(async (event) => {
       payload.max_completion_tokens = payload.max_tokens;
       delete payload.max_tokens;
     }
+    // Ensure a system message exists for better compatibility
+    try {
+      const msgs = Array.isArray(payload.messages) ? payload.messages : [];
+      const hasSystem = msgs.some((m: any) => String(m?.role || '').toLowerCase() === 'system');
+      if (!hasSystem && msgs.length > 0) {
+        payload.messages = [
+          { role: 'system', content: 'You are a helpful assistant. Return only the answer unless instructed otherwise.' },
+          ...msgs
+        ];
+      }
+    } catch {}
     if (!payload.messages && typeof payload.input === 'string') {
       payload.messages = [
         { role: 'system', content: 'You are a helpful assistant.' },
@@ -139,6 +174,9 @@ export default defineEventHandler(async (event) => {
             output_text_len: typeof data?.output_text === 'string' ? data.output_text.length : undefined,
             content_len: typeof data?.choices?.[0]?.message?.content === 'string' ? data.choices[0].message.content.length : undefined
           });
+          if (!upstream.ok) {
+            console.log('[api/ai] Upstream error details', data?.error || data);
+          }
         } catch {}
         return data;
       } catch {

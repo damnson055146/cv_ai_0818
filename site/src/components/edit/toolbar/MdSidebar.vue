@@ -238,6 +238,8 @@ const emit = defineEmits<{
   (e: "add-project-entry"): void;
   (e: "add-skills"): void;
 }>();
+
+// PS quick nav removed; handled by header dropdown
 </script>
 
 <style scoped>

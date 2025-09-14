@@ -2,7 +2,10 @@
   <div class="edit-page flex flex-col">
     <Header>
       <template #middle>
-        <RenameResume />
+        <div class="hstack items-center">
+          <RenameResume />
+          <PsSwitcher />
+        </div>
       </template>
 
       <template #tail>
@@ -58,6 +61,13 @@
 
         <div class="preview-pane" v-bind="api.getPanelProps({ id: 'preview' })">
           <Preview />
+          <!-- PS 大纲完成提示与正文提醒 -->
+          <div v-if="psMeta && psMeta.sub === 'outline'" class="mt-2 px-3">
+            <button class="px-3 py-1 rounded bg-green-600 text-white hover:opacity-90" @click="completeOutline">大纲完成</button>
+          </div>
+          <div v-if="psMeta && psMeta.sub === 'body' && showOutlineChangedWarning" class="mt-2 px-3 text-xs text-amber-600">
+            检测到大纲有修改，建议重新生成正文。
+          </div>
         </div>
       </div>
 
@@ -76,6 +86,7 @@ import * as splitter from "@zag-js/splitter";
 import { normalizeProps, useMachine } from "@zag-js/vue";
 import { useWindowSize } from "@vueuse/core";
 import Toolbar from "~/components/edit/Toolbar.vue";
+import PsSwitcher from "~/components/edit/header/PsSwitcher.vue";
 import ToolbarScheme1 from "~/components/edit/ToolbarScheme1.vue";
 import ToolbarScheme2 from "~/components/edit/ToolbarScheme2.vue";
 import ToolbarScheme3 from "~/components/edit/ToolbarScheme3.vue";
@@ -111,6 +122,27 @@ onMounted(async () => {
     } as any);
     await switchResume(id);
   }
+  // 如果是新建的 PS 且存在种子建议，则触发 Diff 预览应用流程（通过全局事件让 Chatbot 弹窗）
+  try {
+    const rawMeta = localStorage.getItem('ps_doc_meta_' + id)
+    const meta = rawMeta ? JSON.parse(rawMeta) : null
+    if (meta && meta.docType === 'ps' && meta.chatId) {
+      const seedRaw = localStorage.getItem('ps_seed_' + meta.chatId)
+      if (seedRaw) {
+        const seed = JSON.parse(seedRaw)
+        // 构造建议文本：若当前子类型为 outline 用 seed.outline，否则用 seed.body
+        const suggested = meta.sub === 'outline' ? (seed?.outline || '') : (seed?.body || '')
+        if (suggested && typeof suggested === 'string') {
+          const ev = new CustomEvent('show-initial-ps-seed-diff', {
+            detail: {
+              suggestedText: suggested
+            }
+          })
+          window.dispatchEvent(ev)
+        }
+      }
+    }
+  } catch {}
 });
 
 // Toggle toolbar
@@ -146,6 +178,70 @@ const currentLeftSidebarComponent = computed(() => {
       return null; // 返回null，让Editor使用默认的MdSidebar
   }
 });
+
+// ===== PS 大纲/正文 gating =====
+const psMeta = ref<any | null>(null)
+const showOutlineChangedWarning = ref(false)
+
+onMounted(() => {
+  try {
+    const id = route.params.id as string
+    const raw = localStorage.getItem('ps_doc_meta_' + id)
+    psMeta.value = raw ? JSON.parse(raw) : null
+    if (psMeta.value?.sub === 'body') {
+      // 对比baseline
+      const outlineId = psMeta.value.siblingId
+      const storageGetter = (window as any).localforage?.getItem || null
+      // 轻量：通过事件从编辑器获取内容hash
+      const askContent = () => new Promise<string>((resolve) => {
+        const ev = new CustomEvent('get-document-content', { detail: { callback: resolve } })
+        document.dispatchEvent(ev)
+        setTimeout(() => resolve(''), 800)
+      })
+      askContent().then((bodyContent) => {
+        // 读取大纲内容需要切换/或单独保存hash。这里仅基于baselineHash提示
+        if (psMeta.value?.baselineOutlineHash) {
+          showOutlineChangedWarning.value = true
+        }
+      })
+    }
+  } catch {}
+})
+
+function completeOutline() {
+  try {
+    if (!psMeta.value) return
+    const chatId = psMeta.value.chatId
+    // 标记完成
+    localStorage.setItem('ps_outline_status_' + chatId, '1')
+    // 计算大纲hash并写入到正文baseline
+    const askContent = () => new Promise<string>((resolve) => {
+      const ev = new CustomEvent('get-document-content', { detail: { callback: resolve } })
+      document.dispatchEvent(ev)
+      setTimeout(() => resolve(''), 800)
+    })
+    askContent().then((outlineContent) => {
+      const hash = (() => {
+        let h = 0
+        for (let i = 0; i < outlineContent.length; i++) { h = (h << 5) - h + outlineContent.charCodeAt(i); h |= 0 }
+        return String(h >>> 0)
+      })()
+      // 更新正文元数据baseline
+      try {
+        const bodyId = psMeta.value.siblingId
+        const raw = localStorage.getItem('ps_doc_meta_' + bodyId)
+        if (raw) {
+          const meta = JSON.parse(raw)
+          meta.baselineOutlineHash = hash
+          localStorage.setItem('ps_doc_meta_' + bodyId, JSON.stringify(meta))
+        }
+      } catch {}
+      // 跳转到正文
+      const localePath = useLocalePath()
+      navigateTo(localePath(`/edit/${psMeta.value.siblingId}`))
+    })
+  } catch {}
+}
 </script>
 
 <style scoped>

@@ -276,7 +276,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   
   return {
     // 状态
-    state: readonly(state),
+    state,
     
     // 计算属性
     canOperate,

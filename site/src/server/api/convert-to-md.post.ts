@@ -69,7 +69,7 @@ export default defineEventHandler(async (event) => {
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ],
-          temperature: 0.1,
+          // omit temperature; upstream default is 1 for latest models
           max_tokens: maxTokens,
         }
       })

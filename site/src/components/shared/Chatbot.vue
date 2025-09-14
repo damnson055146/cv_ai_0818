@@ -1,7 +1,8 @@
 <template>
   <!-- Floating bubble -->
-  <Teleport to="body">
+  <Teleport to="body" v-if="mounted && !isHiddenByRoute">
     <button
+      data-workspace-ignore="true"
       v-if="!isOpen"
       ref="bubbleRef"
       :style="bubbleStyle"
@@ -16,8 +17,9 @@
   </Teleport>
 
   <!-- Expandable panel -->
-  <Teleport to="body">
+  <Teleport to="body" v-if="mounted && !isHiddenByRoute">
     <div
+      data-workspace-ignore="true"
       v-if="isOpen"
       class="fixed z-50 bg-c text-c shadow-c border border-c rounded-xl overflow-hidden flex flex-col"
       :style="panelStyle"
@@ -68,8 +70,15 @@
       <div v-if="showSettings" class="px-3 py-3 space-y-3 bg-c border-b border-light-c">
         <div class="text-sm text-light-c">Configure model and parameters. API key is not required because requests go through server proxy.</div>
 
+        <!-- Tabs -->
+        <div class="hstack gap-2 text-sm">
+          <button class="px-3 py-1 rounded" :class="settingsTab === 'model' ? 'bg-gray-200 dark:bg-gray-700' : 'bg-transparent'" @click="settingsTab = 'model'">Model</button>
+          <button class="px-3 py-1 rounded" :class="settingsTab === 'prompts' ? 'bg-gray-200 dark:bg-gray-700' : 'bg-transparent'" @click="openPromptsTab">Prompts</button>
+          <button class="px-3 py-1 rounded" :class="settingsTab === 'uploads' ? 'bg-gray-200 dark:bg-gray-700' : 'bg-transparent'" @click="settingsTab = 'uploads'">Uploads</button>
+        </div>
+
         <!-- Model & Params -->
-        <div class="space-y-2">
+        <div v-if="settingsTab === 'model'" class="space-y-2">
           <label class="text-xs text-light-c">Model & Parameters</label>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
             <div class="space-y-1">
@@ -124,7 +133,87 @@
           </div>
         </div>
 
-        
+        <!-- Prompts Tab -->
+        <div v-else-if="settingsTab === 'prompts'" class="space-y-3">
+          <div class="text-xs text-light-c">Edit prompts for current scope (shared by PS outline/body). Leave empty to use defaults.</div>
+          <label class="text-xs inline-flex items-center gap-2">
+            <input type="checkbox" v-model="injectPsBlocks" /> 启用大纲/正文专属系统提示
+          </label>
+          <div class="flex items-center gap-4">
+            <label class="text-xs inline-flex items-center gap-2">
+              <input type="checkbox" v-model="inlineTextAuto" /> 自动内联 MD/TXT 短文本
+            </label>
+            <label class="text-xs inline-flex items-center gap-1">
+              阈值(KB)
+              <input type="number" min="4" max="256" step="4" v-model.number="inlineTextThresholdKB" class="w-16 px-2 py-1 rounded border border-light-c bg-white dark:bg-slate-700 text-xs" />
+            </label>
+          </div>
+          <div v-if="promptsLoading" class="text-xs text-light-c">Loading defaults…</div>
+          <div class="space-y-2">
+            <label class="text-xs font-medium">ps_requirement</label>
+            <textarea v-model="promptsRequirement" class="w-full min-h-20 rounded border border-light-c bg-white dark:bg-slate-700 text-sm px-2 py-1"></textarea>
+          </div>
+          <div class="space-y-2">
+            <label class="text-xs font-medium">guidance_outline</label>
+            <textarea v-model="promptsOutline" class="w-full min-h-20 rounded border border-light-c bg-white dark:bg-slate-700 text-sm px-2 py-1"></textarea>
+          </div>
+          <div class="space-y-2">
+            <label class="text-xs font-medium">guidance_element</label>
+            <textarea v-model="promptsElement" class="w-full min-h-20 rounded border border-light-c bg-white dark:bg-slate-700 text-sm px-2 py-1"></textarea>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div class="space-y-2">
+              <label class="text-xs font-medium">outline_prefix</label>
+              <textarea v-model="promptsOutlinePrefix" class="w-full min-h-16 rounded border border-light-c bg-white dark:bg-slate-700 text-sm px-2 py-1"></textarea>
+            </div>
+            <div class="space-y-2">
+              <label class="text-xs font-medium">body_prefix</label>
+              <textarea v-model="promptsBodyPrefix" class="w-full min-h-16 rounded border border-light-c bg-white dark:bg-slate-700 text-sm px-2 py-1"></textarea>
+            </div>
+          </div>
+          <div class="space-y-2 border-t border-light-c pt-2">
+            <div class="text-xs text-light-c">已内联的文本片段（发送时将附加到上下文）：</div>
+            <div v-if="inlineTextSnippets.length === 0" class="text-xs text-light-c">暂无</div>
+            <div v-else class="flex flex-col gap-1 max-h-32 overflow-auto">
+              <div v-for="(snip, i) in inlineTextSnippets" :key="snip.name + i" class="flex items-center justify-between gap-2 text-xs px-2 py-1 rounded bg-gray-50 dark:bg-gray-700/40 border border-light-c">
+                <div class="truncate flex-1">{{ snip.name }} <span class="text-light-c">({{ snip.text.length }} chars)</span></div>
+                <button type="button" class="px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-600" @click="removeSnippet(i)">移除</button>
+              </div>
+              <div class="flex justify-end">
+                <button type="button" class="px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-600" @click="clearInlineSnippets">清空全部</button>
+              </div>
+            </div>
+          </div>
+          <div class="hstack gap-2">
+            <button class="px-3 py-1 rounded bg-blue-600 text-white hover:opacity-90" @click="savePromptsOverrides">保存覆盖</button>
+            <button class="px-3 py-1 rounded bg-gray-200 dark:bg-gray-600" @click="resetPromptsToDefault">恢复默认</button>
+          </div>
+        </div>
+        <!-- Uploads Tab -->
+        <div v-else-if="settingsTab === 'uploads'" class="space-y-3">
+          <div class="text-xs text-light-c">Attach images and upload PDFs for Responses API.</div>
+          <div class="space-y-2">
+            <label class="text-xs font-medium">Images (PNG/JPEG)</label>
+            <input type="file" accept="image/*" multiple @change="onPickImages" />
+            <div class="grid grid-cols-3 gap-2 mt-2">
+              <div v-for="(src, idx) in imageDataUrls" :key="src" class="relative">
+                <img :src="src" class="w-full h-20 object-cover rounded border border-light-c" />
+                <button type="button" class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs" @click="removeImage(idx)">×</button>
+              </div>
+            </div>
+          </div>
+          <div class="space-y-2">
+            <label class="text-xs font-medium">PDF</label>
+            <input type="file" accept="application/pdf" @change="onPickPdf" />
+            <div class="text-xs text-light-c flex flex-wrap gap-2 items-center">
+              <span v-if="uploadedFileIds.length === 0">None</span>
+              <span v-for="(fid, i) in uploadedFileIds" :key="fid" class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700">
+                {{ fid }}
+                <button type="button" class="text-xs" @click="removeFileId(i)">×</button>
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Messages -->
@@ -217,10 +306,27 @@
 
       <!-- Input -->
       <form class="px-4 pb-4 pt-2 bg-c border-t border-light-c" @submit.prevent="handleSend">
-        <div class="w-full rounded-full border border-light-c bg-white dark:bg-slate-700 text-black dark:text-white shadow-c flex items-center gap-3 px-3 py-1.5">
-          <button type="button" class="circle size-7 hover:bg-gray-100 dark:hover:bg-slate-600" title="Add">
+        <div
+          class="w-full rounded-full border border-light-c bg-white dark:bg-slate-700 text-black dark:text-white shadow-c flex items-center gap-3 px-3 py-1.5 relative"
+          :class="dragActive ? 'ring-2 ring-blue-400 border-blue-400' : ''"
+          @dragover.prevent="onDragOver"
+          @dragleave.prevent="onDragLeave"
+          @drop.prevent="onDrop"
+        >
+          <button type="button" class="circle size-7 hover:bg-gray-100 dark:hover:bg-slate-600" title="Add" @click="toggleAddMenu" ref="plusBtnRef">
             <span class="i-ph:plus-bold text-gray-600 dark:text-gray-300" />
           </button>
+          <!-- Hidden pickers -->
+          <input ref="imagePickerRef" type="file" accept="image/*" multiple class="hidden" @change="onPickImages" />
+          <input ref="pdfPickerRef" type="file" accept="application/pdf" class="hidden" @change="onPickPdf" />
+          <input ref="docPickerRef" type="file" accept="application/pdf,.md,text/plain,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden" @change="onPickDoc" />
+          <!-- Add menu -->
+          <div v-if="showAddMenu" class="chatbot-add-menu absolute left-2 bottom-12 z-50 bg-c border border-light-c rounded-md shadow px-2 py-2 w-48">
+            <button type="button" class="w-full text-left text-sm px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-600" @click="openImagePicker">上传图片…</button>
+            <button type="button" class="w-full text-left text-sm px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-600" @click="openPdfPicker">上传 PDF…</button>
+            <button type="button" class="w-full text-left text-sm px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-600" @click="openDocPicker">上传文档（PDF/MD/TXT/DOCX）…</button>
+            <div class="text-[11px] text-light-c px-2 pt-1">或将图片/文档拖拽到此输入框</div>
+          </div>
 
           <textarea
             id="chatbot-input"
@@ -237,6 +343,13 @@
             <button type="submit" class="circle size-9 bg-black text-white hover:opacity-90" :disabled="!canSend" title="Send">
               <span class="i-ic:round-arrow-upward text-base" />
             </button>
+          </div>
+
+          <!-- Drag overlay -->
+          <div v-if="dragActive" class="absolute inset-0 rounded-full bg-blue-50/60 dark:bg-blue-900/20 border-2 border-dashed border-blue-400 flex items-center justify-center pointer-events-none">
+            <div class="flex items-center gap-2 text-blue-700 dark:text-blue-200 text-sm">
+              <span class="i-ph:upload-simple" /> 释放以上传
+            </div>
           </div>
         </div>
       </form>
@@ -284,18 +397,46 @@ const SYSTEM_PROMPT =
 
 const isOpen = ref(false);
 const draft = ref("");
-const messages = useLocalStorage<Message[]>(
-  "chatbot.messages",
-  [{ id: 1, role: "assistant", content: "Hi! I'm your Chatbot. How can I help you today?" }]
-);
+const messages = ref<Message[]>([]);
 const isThinking = ref(false);
+const mounted = ref(false)
 
 // 当前文档ID（来源于路由）
 const route = useRoute()
+const runtimeConfig = useRuntimeConfig()
+const isHiddenByRoute = computed(() => {
+  try {
+    const hidden: string[] = (runtimeConfig.public as any)?.chatbot?.bubbleHiddenRoutes || []
+    const normalize = (p: string) => {
+      if (!p) return '/'
+      const noQuery = p.split('?')[0]
+      const trimmed = noQuery.replace(/\/+$/, '')
+      return trimmed === '' ? '/' : trimmed
+    }
+    const current = normalize(route.path || '/')
+    return hidden.map(normalize).includes(current)
+  } catch {
+    return false
+  }
+})
 const documentId = computed(() => {
   const id = route.params?.id
   if (Array.isArray(id)) return id[0]
   return (id as string) || ''
+})
+
+// PS大纲/正文共享chatId（若存在元数据则优先）
+const chatScopedId = computed(() => {
+  const id = documentId.value
+  if (!id) return ''
+  try {
+    const raw = localStorage.getItem('ps_doc_meta_' + id)
+    if (!raw) return id
+    const meta = JSON.parse(raw) as any
+    return (meta?.chatId as string) || id
+  } catch {
+    return id
+  }
 })
 
 // 模式管理
@@ -304,9 +445,16 @@ const currentMode = useLocalStorage<'ask' | 'edit'>('chatbot.mode', 'edit');
 const bubbleRef = ref<HTMLButtonElement | null>(null);
 const inputRef = ref<HTMLTextAreaElement | null>(null);
 const scrollRef = ref<HTMLDivElement | null>(null);
+const plusBtnRef = ref<HTMLButtonElement | null>(null)
+const imagePickerRef = ref<HTMLInputElement | null>(null)
+const pdfPickerRef = ref<HTMLInputElement | null>(null)
+const docPickerRef = ref<HTMLInputElement | null>(null)
+const showAddMenu = ref(false)
 
 // Settings state
 const showSettings = ref(false);
+const settingsTab = ref<'model' | 'prompts' | 'uploads'>('model')
+const injectPsBlocks = useLocalStorage<boolean>('chatbot.injectPsBlocks', true)
 // API key is no longer required on client; keep a stub store for backward compatibility
 const revealKey = ref(false);
 const apiKey = ref<string>("");
@@ -314,7 +462,7 @@ const apiKeyLocal = ref<string>("");
 
 const runtime = useRuntimeConfig();
 const provider = (runtime.public as any)?.chatbot?.provider ?? "openai";
-const defaultModel = (runtime.public as any)?.chatbot?.model ?? "o3";
+const defaultModel = (runtime.public as any)?.chatbot?.model ?? "gpt-5";
 const globalApiBase = (runtime.public as any)?.chatbot?.apiBase ?? "";
 const models = (runtime.public as any)?.chatbot?.models ?? [];
 const responseFormatDefault = (runtime.public as any)?.chatbot?.responseFormat ?? { enabled: false, schema: null };
@@ -323,13 +471,20 @@ const gpt5ExtrasDefault = (runtime.public as any)?.chatbot?.gpt5Extras ?? false;
 // Model and params state
 const modelOptions = models as Array<{ id: string; label: string; general: any; specific?: any; apiBase?: string; apiModel?: string }>
 const selectedModel = useLocalStorage<string>("chatbot.model", defaultModel);
-if (selectedModel.value === 'gpt-4.1') selectedModel.value = defaultModel;
+// Sanitize legacy/invalid values persisted in localStorage (e.g., gpt-4o-mini)
+watch([selectedModel, () => modelOptions], () => {
+  const valid = modelOptions.some((m) => m.id === selectedModel.value)
+  if (!valid) selectedModel.value = defaultModel
+}, { immediate: true })
 
 const currentModel = computed(() => modelOptions.find((m) => m.id === selectedModel.value));
-const generalSpec = computed(() => currentModel.value?.general ?? { temperature: { min: 0, max: 2, step: 0.1, default: 1 }, max_tokens: { min: 16, max: 32768, step: 16, default: 2048 } });
-const apiModel = computed(() => currentModel.value?.apiModel || selectedModel.value);
+const generalSpec = computed(() => currentModel.value?.general ?? { max_tokens: { min: 16, max: 32768, step: 16, default: 2048 } });
+const apiModel = computed(() => currentModel.value?.apiModel || defaultModel);
 const gpt5Spec = computed(() => (modelOptions.find((m) => m.id === "gpt-5")?.specific ?? { verbosity: { options: ["low", "medium", "high"], default: "medium" }, reasoning_effort: { options: ["low", "medium", "high"], default: "medium" } }));
 const gpt5ExtrasEnabled = useLocalStorage<boolean>("chatbot.gpt5Extras", gpt5ExtrasDefault);
+// Inline text settings
+const inlineTextAuto = useLocalStorage<boolean>('chatbot.inlineTextAuto', true)
+const inlineTextThresholdKB = useLocalStorage<number>('chatbot.inlineTextThresholdKB', 80)
 
 // Prefer global apiBase (proxy) when configured; else fallback to model's endpoint
 const effectiveApiBase = computed(() => globalApiBase || currentModel.value?.apiBase || "");
@@ -342,7 +497,8 @@ const effectiveApiBaseNormalized = computed(() => {
   return url;
 });
 
-const temperature = useLocalStorage<number>("chatbot.temperature", generalSpec.value.temperature.default);
+// Remove temperature for GPT-5; upstream only supports default = 1, so we omit the field.
+const temperature = ref<number>(1);
 const maxTokens = useLocalStorage<number>("chatbot.max_tokens", generalSpec.value.max_tokens.default);
 watch(currentModel, (m) => {
   if (!m) return;
@@ -386,8 +542,8 @@ const bubbleSize = 56; // px
 const bubbleMargin = 16; // px
 
 // Panel size and position (fixed to bottom-right but respects bubble offset when minimized)
-const panelWidth = ref(420);
-const panelHeight = ref(560);
+const panelWidth = ref(500);
+const panelHeight = ref(800);
 
 // Fix-in-Chat 状态管理
 const diffPreviewVisible = ref(false);
@@ -457,6 +613,117 @@ function toggleOpen() {
 
 function toggleSettings() {
   showSettings.value = !showSettings.value;
+}
+
+function toggleAddMenu() {
+  showAddMenu.value = !showAddMenu.value
+}
+function openImagePicker() {
+  showAddMenu.value = false
+  imagePickerRef.value?.click()
+}
+function openPdfPicker() {
+  showAddMenu.value = false
+  pdfPickerRef.value?.click()
+}
+function openDocPicker() {
+  showAddMenu.value = false
+  docPickerRef.value?.click()
+}
+
+// Close add menu when clicking outside or pressing Esc
+function handleGlobalClick(e: MouseEvent) {
+  const target = e.target as Node
+  const menu = document.querySelector('.chatbot-add-menu')
+  const btn = plusBtnRef.value
+  if (!menu || !btn) return
+  if (!menu.contains(target) && !btn.contains(target as any)) {
+    showAddMenu.value = false
+  }
+}
+function handleEsc(e: KeyboardEvent) {
+  if (e.key === 'Escape') showAddMenu.value = false
+}
+
+// Drag-and-drop into input area
+const dragActive = ref(false)
+function onDragOver() { dragActive.value = true }
+function onDragLeave() { dragActive.value = false }
+async function onDrop(e: DragEvent) {
+  dragActive.value = false
+  const dt = e.dataTransfer
+  if (!dt) return
+  const files = dt.files
+  if (!files || !files.length) return
+  // Split images and pdf, apply existing handlers (limits also apply)
+  const images: File[] = []
+  const pdfs: File[] = []
+  const texts: File[] = [] // md/txt/docx
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i]
+    if (f.type.startsWith('image/')) images.push(f)
+    else if (f.type === 'application/pdf') pdfs.push(f)
+    else if (f.type === 'text/markdown' || f.name.endsWith('.md') || f.type === 'text/plain' || f.name.endsWith('.txt') || f.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || f.name.endsWith('.docx')) texts.push(f)
+  }
+  if (images.length) {
+    const list = Array.from(images)
+    const maxImages = 6
+    const maxSize = 4 * 1024 * 1024
+    for (const f of list) {
+      if (imageDataUrls.value.length >= maxImages) break
+      if (f.size > maxSize) continue
+      await new Promise<void>((resolve) => {
+        const fr = new FileReader()
+        fr.onload = () => { if (typeof fr.result === 'string') imageDataUrls.value.push(fr.result); resolve() }
+        fr.onerror = () => resolve()
+        fr.readAsDataURL(f)
+      })
+    }
+  }
+  if (pdfs.length) {
+    // Only take first PDF
+    const f = pdfs[0]
+    const max = 20 * 1024 * 1024
+    if (f.size <= max) {
+      const b64 = await fileToBase64(f)
+      try {
+        const res: any = await $fetch('/api/files/upload', { method: 'POST', body: { name: f.name || 'upload.pdf', contentBase64: b64, purpose: 'assistants' }})
+        if (res?.status === 'ok' && res?.file?.id) uploadedFileIds.value.push(res.file.id)
+      } catch {}
+    }
+  }
+  if (texts.length) {
+    // Only take first doc-like file; upload to Files for uniformity
+    const f = texts[0]
+    const isTextLike = f.type === 'text/markdown' || f.name.endsWith('.md') || f.type === 'text/plain' || f.name.endsWith('.txt')
+    if (inlineTextAuto.value && isTextLike && f.size <= (inlineTextThresholdKB.value * 1024)) {
+      try {
+        const text = await f.text()
+        inlineTextSnippets.value.push({ name: f.name, text })
+        pushMessage({ role: 'assistant', content: `已内联导入文本：${f.name}（${text.length} 字符）` })
+      } catch {}
+    } else {
+      const b64 = await fileToBase64(f)
+      try {
+        const res: any = await $fetch('/api/files/upload', { method: 'POST', body: { name: f.name, contentBase64: b64, purpose: 'assistants' }})
+        if (res?.status === 'ok' && res?.file?.id) uploadedFileIds.value.push(res.file.id)
+      } catch {}
+    }
+  }
+}
+
+// Convert File to base64 string using FileReader (avoid stack overflow)
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const fr = new FileReader()
+    fr.onload = () => {
+      const res = typeof fr.result === 'string' ? fr.result : ''
+      const idx = res.indexOf(',')
+      resolve(idx >= 0 ? res.slice(idx + 1) : res)
+    }
+    fr.onerror = () => resolve('')
+    fr.readAsDataURL(file)
+  })
 }
 
 /**
@@ -533,8 +800,9 @@ function pushMessage(partial: Omit<Message, "id">) {
   messages.value.push({ id, role: partial.role, content });
   // 写入按文档分隔的对话记忆（仅本地）
   try {
-    if (documentId.value && (partial.role === 'user' || partial.role === 'assistant')) {
-      convStore.appendMessage(documentId.value, partial.role as any, content)
+    const key = chatScopedId.value
+    if (key && (partial.role === 'user' || partial.role === 'assistant')) {
+      convStore.appendMessage(key, partial.role as any, content)
     }
   } catch {}
   nextTick(() => scrollToBottom());
@@ -542,7 +810,7 @@ function pushMessage(partial: Omit<Message, "id">) {
 
 function clearMessages() {
   messages.value = [];
-  try { if (documentId.value) convStore.clear(documentId.value) } catch {}
+  try { if (chatScopedId.value) convStore.clear(chatScopedId.value) } catch {}
 }
 
 function saveApiKey() {}
@@ -644,11 +912,75 @@ async function simulateAssistant(userText: string) {
     if (endpoint) {
       const useResponsesApi = selectedModel.value.startsWith('o3');
       const chatMessages = buildChatMessages();
+      // Inject prompts context and ps subtype-specific blocks
+      try {
+        const scopeId = chatScopedId.value || documentId.value || ''
+        if (scopeId) {
+          const mod: any = await import('~/composables/psPrompts')
+          const svc = mod.usePsPrompts()
+          if (!svc.defaults.value?.ps_requirement) await svc.loadDefaultPrompts()
+          const eff = svc.getEffectivePrompts(scopeId)
+          let sub: 'outline' | 'body' | null = null
+          let siblingId: string | null = null
+          try {
+            const raw = localStorage.getItem('ps_doc_meta_' + (documentId.value || ''))
+            const meta = raw ? JSON.parse(raw) : null
+            sub = meta?.sub || null
+            siblingId = meta?.siblingId || null
+          } catch {}
+
+          if (!injectPsBlocks.value) {
+            const block = [eff.ps_requirement, eff.guidance_outline, eff.guidance_element]
+              .filter(Boolean).join('\n\n')
+            if (block.trim()) chatMessages.unshift({ role: 'system', content: block })
+          } else if (sub === 'outline') {
+            // Outline: 强化结构引导，先注入大纲指导与元素指南，再附加需求
+            const block = [
+              (eff.outline_prefix || '[PS-OUTLINE]\n你正在编写「个人陈述大纲」。先列出清晰的结构与各段落要点，不要展开正文。'),
+              eff.guidance_outline || '',
+              eff.guidance_element || '',
+              eff.ps_requirement || ''
+            ].filter(Boolean).join('\n\n')
+            chatMessages.unshift({ role: 'system', content: block })
+          } else if (sub === 'body') {
+            // Body: 遵循已完成的大纲撰写正文；尝试加载配对大纲文档内容作为上下文
+            let outlinePreview = ''
+            try {
+              if (siblingId) {
+                const db = await import('~/utils/database')
+                const storage = (await db.getStorage()) || {}
+                const sibling = storage?.[siblingId as any]
+                const md = typeof sibling?.markdown === 'string' ? sibling.markdown : ''
+                if (md) {
+                  const limit = 6000
+                  outlinePreview = md.length > limit ? (md.slice(0, limit) + '\n...') : md
+                }
+              }
+            } catch {}
+            const header = (eff.body_prefix || '[PS-BODY]\n你正在撰写「个人陈述正文」。必须严格遵循既定大纲的结构与顺序，不要修改大纲的标题与层级。')
+            const block = [
+              header,
+              eff.ps_requirement || '',
+              eff.guidance_element || '',
+              outlinePreview ? `以下为大纲参考（只用作结构约束，不要复制原话）：\n${outlinePreview}` : ''
+            ].filter(Boolean).join('\n\n')
+            chatMessages.unshift({ role: 'system', content: block })
+          } else {
+            // 普通文档或无子类型：按默认顺序注入三段
+            const block = [eff.ps_requirement, eff.guidance_outline, eff.guidance_element]
+              .filter(Boolean).join('\n\n')
+            if (block.trim()) chatMessages.unshift({ role: 'system', content: block })
+          }
+        }
+      } catch {}
       if (useResponsesApi) {
         // Responses API expects `input` and `max_output_tokens`
+        const baseInput = buildInputFromMessages(chatMessages)
+        const uploads = buildResponsesInputWithUploads(baseInput)
         const payload: any = {
           model: apiModel.value,
-          input: buildInputFromMessages(chatMessages),
+          input: uploads.input || baseInput,
+          attachments: uploads.attachments,
           temperature: temperature.value,
           max_output_tokens: maxTokens.value,
           reasoning: { effort: reasoningEffort.value }
@@ -682,7 +1014,7 @@ async function simulateAssistant(userText: string) {
         const basePayload: any = {
           model: apiModel.value,
           messages: chatMessages,
-          temperature: temperature.value,
+          // omit temperature for GPT-5
           // For GPT-5, backend will normalize if needed, but we prefer sending correct field
           ...(selectedModel.value === 'gpt-5'
             ? { max_completion_tokens: maxTokens.value }
@@ -811,8 +1143,9 @@ async function requestChatCompletions(endpoint: string, basePayload: any) {
   const payloadWithExtras = includeGpt5Extras
     ? { ...basePayload, reasoning_effort: reasoningEffort.value, verbosity: verbosity.value }
     : basePayload;
+  const hasResponseFormat = !!(basePayload && (basePayload as any).response_format);
   try {
-    return await $fetch(endpoint, {
+    const res: any = await $fetch(endpoint, {
       method: "POST",
       headers: {
         // Proxy route will inject Authorization
@@ -820,6 +1153,12 @@ async function requestChatCompletions(endpoint: string, basePayload: any) {
       },
       body: { ...payloadWithExtras, model: apiModel.value }
     });
+    // If server switched to Responses API, normalize to chat-like shape
+    if (res && (res.output || res.object === 'response')) {
+      const text = normalizeResponsesOutput(res)
+      return { model: res?.model, choices: [{ message: { content: text } }] }
+    }
+    return res
   } catch (e: any) {
     const status = e?.statusCode || e?.status || e?.response?.status;
     const msg: string = e?.data?.error?.message || e?.message || "";
@@ -827,7 +1166,7 @@ async function requestChatCompletions(endpoint: string, basePayload: any) {
     if (includeGpt5Extras && (status === 400 || isInvalidRequest)) {
       // retry without GPT‑5 extras
       try {
-        return await $fetch(endpoint, {
+        const res2: any = await $fetch(endpoint, {
           method: "POST",
           headers: {
             // Proxy route will inject Authorization
@@ -835,8 +1174,27 @@ async function requestChatCompletions(endpoint: string, basePayload: any) {
           },
           body: { ...basePayload, model: apiModel.value }
         });
+        if (res2 && (res2.output || res2.object === 'response')) {
+          const text = normalizeResponsesOutput(res2)
+          return { model: res2?.model, choices: [{ message: { content: text } }] }
+        }
+        return res2
       } catch (err) {
-        throw err;
+        // fallthrough to potential response_format retry below
+        e = err as any;
+      }
+    }
+    // If still failing and payload had response_format, retry once without it
+    if (hasResponseFormat && (status === 400 || isInvalidRequest)) {
+      try {
+        const { response_format, ...rest } = basePayload || {} as any;
+        return await $fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: { ...rest, model: apiModel.value }
+        });
+      } catch (err2) {
+        throw err2;
       }
     }
     throw e;
@@ -925,9 +1283,8 @@ async function processWorkspaceAiOperation(requirement: AiRequirement, originalI
       ? workspaceStore.state.currentSelection.text 
       : ''
     
-    // 3. 构建AI提示（将选中文本明确包含在prompt中，便于后端检查）
+    // 3. 构建AI提示（仅内嵌原文，不再添加额外标签，避免模型回显）
     const aiPrompt = buildWorkspaceAiPrompt(requirement, selectedText, originalInput)
-      + (selectedText ? `\n\n[选中文本]\n${selectedText}\n[/选中文本]` : '')
     
     // 4. 调用AI API (复用现有的聊天机器人AI调用逻辑)
     const aiResponse = await callAiForWorkspace(aiPrompt)
@@ -1001,7 +1358,7 @@ async function callAiForWorkspace(prompt: string): Promise<string> {
     const payload = {
       model: apiModel.value,
       input: prompt,
-      temperature: temperature.value,
+      // omit temperature for GPT-5
       max_output_tokens: maxTokens.value,
       reasoning: { effort: reasoningEffort.value }
     }
@@ -1035,7 +1392,7 @@ async function callAiForWorkspace(prompt: string): Promise<string> {
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: prompt }
       ],
-      temperature: temperature.value,
+      // omit temperature for GPT-5
       ...(selectedModel.value === 'gpt-5'
         ? { max_completion_tokens: maxTokens.value }
         : { max_tokens: maxTokens.value })
@@ -1105,6 +1462,19 @@ async function applyAiResultToEditor(requirement: AiRequirement, aiResult: strin
       description = '操作已完成'
   }
   
+  // Push a detailed change summary to Chatbot (show before/after and model output)
+  try {
+    const limit = 1000
+    const orig = (selectedText || '').slice(0, limit)
+    const after = (aiResult || '').slice(0, limit)
+    const moreO = selectedText && selectedText.length > limit ? `\n...(${selectedText.length - limit} more chars)` : ''
+    const moreA = aiResult && aiResult.length > limit ? `\n...(${aiResult.length - limit} more chars)` : ''
+    pushMessage({
+      role: 'assistant',
+      content: `已应用修改（${description}）。\n\n原文：\n\n\`\`\`\n${orig}${moreO}\n\`\`\`\n\n修改后：\n\n\`\`\`\n${after}${moreA}\n\`\`\``
+    })
+  } catch {}
+  
   return { description }
 }
 
@@ -1162,7 +1532,7 @@ async function processSelectionEdit(userText: string) {
         if (aiResult.success) {
           pushMessage({ 
             role: "assistant", 
-            content: "未精确识别，但已按你的原话完成选区编辑。"
+            content: "已完成选区编辑。"
           })
         } else {
           pushMessage({ 
@@ -1767,7 +2137,7 @@ async function executeOriginalChatLogic(userText: string) {
         const payload: any = {
           model: apiModel.value,
           input: buildInputFromMessages(chatMessages),
-          temperature: temperature.value,
+          // omit temperature for GPT-5
           max_output_tokens: maxTokens.value,
           reasoning: { effort: reasoningEffort.value }
         };
@@ -1800,7 +2170,7 @@ async function executeOriginalChatLogic(userText: string) {
         const basePayload: any = {
           model: apiModel.value,
           messages: chatMessages,
-          temperature: temperature.value,
+          // omit temperature for GPT-5
           // For GPT-5, backend will normalize if needed, but we prefer sending correct field
           ...(selectedModel.value === 'gpt-5'
             ? { max_completion_tokens: maxTokens.value }
@@ -1866,8 +2236,8 @@ function buildChatMessages() {
   const base: Array<{ role: string; content: string }> = [
     { role: "system", content: SYSTEM_PROMPT }
   ];
-  if (documentId.value) {
-    const ctx = buildContext({ documentId: documentId.value, docType: 'cv', language: 'zh-cn', tailMessages: 30 })
+  if (chatScopedId.value) {
+    const ctx = buildContext({ documentId: chatScopedId.value, docType: 'cv', language: 'zh-cn', tailMessages: 30 })
     if (ctx.rules && ctx.rules.trim()) {
       base.push({ role: 'system', content: `以下是跨文档可复用的写作/格式规则，请遵守：\n${ctx.rules.trim()}` })
     }
@@ -1887,6 +2257,38 @@ function buildInputFromMessages(msgs: Array<{ role: string; content: string }>) 
     .filter((m) => !isHtmlLike(m.content))
     .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
     .join("\n\n");
+}
+
+// Build Responses API input parts for images/PDF per OpenAI docs
+function buildResponsesInputWithUploads(baseText: string) {
+  const content: any[] = []
+  if (baseText && baseText.trim()) content.push({ type: 'input_text', text: baseText })
+  // Inline text snippets (from md/txt small files)
+  try {
+    if (Array.isArray(inlineTextSnippets?.value)) {
+      for (const snip of inlineTextSnippets.value) {
+        if (snip?.text && snip.text.trim()) {
+          const header = snip.name ? `[[${snip.name}]]\n` : ''
+          content.push({ type: 'input_text', text: `${header}${snip.text}` })
+        }
+      }
+    }
+  } catch {}
+  try {
+    if (Array.isArray(imageDataUrls?.value)) {
+      for (const url of imageDataUrls.value) {
+        if (typeof url === 'string' && url.startsWith('data:')) {
+          const m = url.match(/^data:([^;]+);base64,(.*)$/)
+          if (m) content.push({ type: 'input_image', image_data: { data: m[2], mime_type: m[1] } })
+        }
+      }
+    }
+  } catch {}
+  const input = [{ role: 'user', content }]
+  const attachments = Array.isArray(uploadedFileIds?.value) && uploadedFileIds.value.length
+    ? uploadedFileIds.value.map((id) => ({ file_id: id, tools: [{ type: 'file_search' }] }))
+    : undefined
+  return { input, attachments }
 }
 
 // Drag logic for bubble
@@ -2321,6 +2723,14 @@ function cancelCustomPrompt() {
   showCustomPrompt.value = false;
 }
 
+// Manage inline text snippets
+function removeSnippet(idx: number) {
+  if (idx >= 0 && idx < inlineTextSnippets.value.length) inlineTextSnippets.value.splice(idx, 1)
+}
+function clearInlineSnippets() {
+  inlineTextSnippets.value = []
+}
+
 function onBubbleClick() {
   if (dragging) return; // ignore click if user just dragged
   toggleOpen();
@@ -2329,19 +2739,237 @@ function onBubbleClick() {
 onMounted(() => {
   computeInitialPosition();
   window.addEventListener("resize", computeInitialPosition);
+  // Load conversation history scoped by chatScopedId (PS outline/body share same chatId)
+  const loadScopedHistory = () => {
+    try {
+      const key = chatScopedId.value
+      const hist = key ? convStore.loadMessages(key, 40) : []
+      const mapped: Message[] = (hist || []).map((r) => ({
+        id: (r as any).timestamp || Date.now() + Math.random(),
+        role: r.role as Role,
+        content: r.content
+      }))
+      messages.value = mapped.length ? mapped : [{ id: Date.now(), role: 'assistant', content: "Hi! I'm your Chatbot. How can I help you today?" }]
+      nextTick(() => scrollToBottom())
+    } catch {
+      if (messages.value.length === 0) messages.value = [{ id: Date.now(), role: 'assistant', content: "Hi! I'm your Chatbot. How can I help you today?" }]
+    }
+  }
+  watch(chatScopedId, () => loadScopedHistory(), { immediate: true })
   
   // 监听 Fix-in-Chat 事件
   window.addEventListener("start-fix-in-chat", handleFixInChatEvent);
   
   // 监听工作区选区变化事件
   window.addEventListener("workspace-selection-changed", handleSelectionChanged);
+  // 首页新建PS后，编辑页触发的初始化种子建议对比
+  window.addEventListener('show-initial-ps-seed-diff', (e: any) => {
+    try {
+      const suggested = String(e?.detail?.suggestedText || '')
+      if (!suggested) return
+      // 获取当前文档全文作为 original
+      getCurrentDocumentContent().then((orig) => {
+        fixOriginalText.value = orig || ''
+        fixSuggestedText.value = suggested
+        fixContextInfo.value = undefined
+        diffPreviewVisible.value = true
+      })
+    } catch {}
+  })
+  // Global listeners for Add menu
+  document.addEventListener('mousedown', handleGlobalClick, true)
+  document.addEventListener('keydown', handleEsc, true)
 });
 
 onUnmounted(() => {
   window.removeEventListener("resize", computeInitialPosition);
   window.removeEventListener("start-fix-in-chat", handleFixInChatEvent);
   window.removeEventListener("workspace-selection-changed", handleSelectionChanged);
+  window.removeEventListener('show-initial-ps-seed-diff', () => {})
+  document.removeEventListener('mousedown', handleGlobalClick, true)
+  document.removeEventListener('keydown', handleEsc, true)
 });
+
+// Prompts editing state
+const promptsLoading = ref(false)
+const promptsRequirement = ref('')
+const promptsOutline = ref('')
+const promptsElement = ref('')
+const promptsOutlinePrefix = ref('')
+const promptsBodyPrefix = ref('')
+
+async function openPromptsTab() {
+  settingsTab.value = 'prompts'
+  try {
+    const { usePsPrompts } = await import('~/composables/psPrompts')
+    const svc = usePsPrompts()
+    if (!svc.defaults.value?.ps_requirement) {
+      promptsLoading.value = true
+      await svc.loadDefaultPrompts()
+      promptsLoading.value = false
+    }
+    const scopeId = chatScopedId.value || documentId.value || 'global'
+    const eff = svc.getEffectivePrompts(scopeId)
+    promptsRequirement.value = eff.ps_requirement
+    promptsOutline.value = eff.guidance_outline
+    promptsElement.value = eff.guidance_element
+    promptsOutlinePrefix.value = eff.outline_prefix || ''
+    promptsBodyPrefix.value = eff.body_prefix || ''
+  } catch {}
+}
+
+async function savePromptsOverrides() {
+  try {
+    const { usePsPrompts } = await import('~/composables/psPrompts')
+    const svc = usePsPrompts()
+    const scopeId = chatScopedId.value || documentId.value || 'global'
+    svc.setOverrides(scopeId, {
+      ps_requirement: promptsRequirement.value,
+      guidance_outline: promptsOutline.value,
+      guidance_element: promptsElement.value,
+      outline_prefix: promptsOutlinePrefix.value,
+      body_prefix: promptsBodyPrefix.value
+    })
+    pushMessage({ role: 'assistant', content: '已保存当前作用域的提示词覆盖。' })
+  } catch (e: any) {
+    pushMessage({ role: 'assistant', content: '保存提示词失败。' })
+  }
+}
+
+async function resetPromptsToDefault() {
+  try {
+    const { usePsPrompts } = await import('~/composables/psPrompts')
+    const svc = usePsPrompts()
+    const scopeId = chatScopedId.value || documentId.value || 'global'
+    svc.clearOverrides(scopeId)
+    const eff = svc.getEffectivePrompts(scopeId)
+    promptsRequirement.value = eff.ps_requirement
+    promptsOutline.value = eff.guidance_outline
+    promptsElement.value = eff.guidance_element
+    promptsOutlinePrefix.value = eff.outline_prefix || ''
+    promptsBodyPrefix.value = eff.body_prefix || ''
+    pushMessage({ role: 'assistant', content: '已恢复到默认提示词。' })
+  } catch {
+    pushMessage({ role: 'assistant', content: '恢复默认失败。' })
+  }
+}
+
+// Uploads state (images dataURL, pdf file id)
+const imageDataUrls = ref<string[]>([])
+const uploadedFileIds = ref<string[]>([])
+const inlineTextSnippets = ref<Array<{ name: string; text: string }>>([])
+
+function onPickImages(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = input?.files
+  if (!files) return
+  const maxImages = 6
+  const maxSize = 4 * 1024 * 1024 // 4MB
+  const readers: Promise<void>[] = []
+  const canAdd = Math.max(0, maxImages - imageDataUrls.value.length)
+  for (let i = 0; i < Math.min(files.length, canAdd); i++) {
+    const f = files[i]
+    if (f.size > maxSize) continue
+    const p = new Promise<void>((resolve) => {
+      const fr = new FileReader()
+      fr.onload = () => { if (typeof fr.result === 'string') imageDataUrls.value.push(fr.result); resolve() }
+      fr.onerror = () => resolve()
+      fr.readAsDataURL(f)
+    })
+    readers.push(p)
+  }
+  Promise.all(readers).then(() => {
+    try {
+      if (files && files.length) {
+        const n = Math.min(files.length, canAdd)
+        if (n > 0) pushMessage({ role: 'assistant', content: `已添加图片 ${n} 张（发送时附加）。` })
+      }
+    } catch {}
+  })
+  // reset input to allow re-selecting same files
+  try { if (input) (input as any).value = '' } catch {}
+}
+
+async function onPickPdf(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input?.files?.[0]
+  if (!file) return
+  if (file.size > 20 * 1024 * 1024) return // 20MB cap
+  const b64 = await fileToBase64(file)
+  try {
+    const res: any = await $fetch('/api/files/upload', { method: 'POST', body: { name: file.name || 'upload.pdf', contentBase64: b64, purpose: 'assistants' }})
+    if (res?.status === 'ok' && res?.file?.id) {
+      uploadedFileIds.value.push(res.file.id)
+      try { pushMessage({ role: 'assistant', content: `已上传：${file.name}` }) } catch {}
+    } else {
+      try { pushMessage({ role: 'assistant', content: `上传失败：${res?.error || '服务器未响应'}` }) } catch {}
+    }
+  } catch (err: any) {
+    try { pushMessage({ role: 'assistant', content: `上传失败：${err?.message || '网络错误'}` }) } catch {}
+  }
+}
+
+async function onPickDoc(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input?.files?.[0]
+  if (!file) return
+  // Short-text inline: if md/txt and < 80KB，则读文本，直接加入 inlineTextSnippets；否则上传 Files
+  const isTextLike = file.type === 'text/markdown' || file.name.endsWith('.md') || file.type === 'text/plain' || file.name.endsWith('.txt')
+  if (inlineTextAuto.value && isTextLike && file.size <= (inlineTextThresholdKB.value * 1024)) {
+    try {
+      const text = await file.text()
+      inlineTextSnippets.value.push({ name: file.name, text })
+      pushMessage({ role: 'assistant', content: `已内联导入文本：${file.name}（${text.length} 字符）` })
+      return
+    } catch {}
+  }
+  const b64 = await fileToBase64(file)
+  try {
+    const res: any = await $fetch('/api/files/upload', { method: 'POST', body: { name: file.name, contentBase64: b64, purpose: 'assistants' }})
+    if (res?.status === 'ok' && res?.file?.id) {
+      uploadedFileIds.value.push(res.file.id)
+      try { pushMessage({ role: 'assistant', content: `已上传：${file.name}` }) } catch {}
+    } else {
+      try { pushMessage({ role: 'assistant', content: `上传失败：${res?.error || '服务器未响应'}` }) } catch {}
+    }
+  } catch (err: any) {
+    try { pushMessage({ role: 'assistant', content: `上传失败：${err?.message || '网络错误'}` }) } catch {}
+  }
+}
+
+// Remove image / file
+function removeImage(idx: number) {
+  if (idx >= 0 && idx < imageDataUrls.value.length) imageDataUrls.value.splice(idx, 1)
+}
+function removeFileId(idx: number) {
+  if (idx >= 0 && idx < uploadedFileIds.value.length) uploadedFileIds.value.splice(idx, 1)
+}
+
+// Paste image support
+onMounted(() => {
+  mounted.value = true
+  const handler = (e: ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const it of items as any) {
+      if (it.type?.startsWith('image/')) {
+        const file = it.getAsFile?.()
+        if (file) {
+          if (imageDataUrls.value.length >= 6 || file.size > 4 * 1024 * 1024) continue
+          const fr = new FileReader()
+          fr.onload = () => { if (typeof fr.result === 'string') imageDataUrls.value.push(fr.result) }
+          fr.readAsDataURL(file)
+        }
+      }
+    }
+  }
+  window.addEventListener('paste', handler)
+  ;(window as any)._chatbot_paste_handler = handler
+})
+onUnmounted(() => {
+  const h = (window as any)._chatbot_paste_handler
+  if (h) window.removeEventListener('paste', h)
+})
 </script>
 
 <style scoped>

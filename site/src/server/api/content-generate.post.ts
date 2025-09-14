@@ -28,21 +28,52 @@ export default defineEventHandler(async (event) => {
     const aiRes: any = await $fetch('/api/ai', {
       method: 'POST',
       body: {
-        model: 'gpt-4o-mini',
+        model: 'gpt-5',
         // 允许外部透传 model；否则后端会用默认模型
         messages: [
           { role: 'user', content: composed }
         ],
         // 适度增加长度，以容纳段落替换
-        max_tokens: 2048,
-        temperature: 0.7
+        max_tokens: 2048
       }
     })
 
-    // 兼容两种返回结构
+    // 兼容三种返回结构：chat-completions / responses / 纯文本
+    function normalizeResponsesOutput(res: any): string {
+      if (!res) return ''
+      if (typeof res?.output_text === 'string' && res.output_text) return res.output_text
+      const outputs = res?.output
+      if (Array.isArray(outputs)) {
+        const texts: string[] = []
+        for (const item of outputs) {
+          if (typeof item?.output_text === 'string') texts.push(item.output_text)
+          if (typeof item?.text === 'string') texts.push(item.text)
+          const contentArr = item?.content
+          if (Array.isArray(contentArr)) {
+            for (const c of contentArr) {
+              if (typeof c?.text === 'string') texts.push(c.text)
+              else if (typeof c === 'string') texts.push(c)
+            }
+          }
+        }
+        if (texts.length) return texts.join('')
+      }
+      const content = res?.content || res?.message?.content
+      if (Array.isArray(content)) {
+        const texts: string[] = []
+        for (const c of content) {
+          if (typeof c?.text === 'string') texts.push(c.text)
+          else if (typeof c === 'string') texts.push(c)
+        }
+        if (texts.length) return texts.join('')
+      }
+      return ''
+    }
+
     const content =
-      aiRes?.choices?.[0]?.message?.content?.trim?.() ||
-      aiRes?.reply ||
+      (aiRes?.choices?.[0]?.message?.content?.trim?.() as string) ||
+      normalizeResponsesOutput(aiRes) ||
+      (aiRes?.reply as string) ||
       (typeof aiRes === 'string' ? aiRes : '')
 
     if (!content) {

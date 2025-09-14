@@ -3,7 +3,7 @@
     <slot name="button">Open dialog</slot>
   </div>
 
-  <Teleport to="body">
+  <Teleport to="body" v-if="mounted">
     <div v-if="api.isOpen">
       <div v-bind="api.backdropProps" />
       <div v-bind="api.positionerProps">
@@ -48,4 +48,7 @@ const props = defineProps<{
 
 const [state, send] = useMachine(dialog.machine({ id: props.id }));
 const api = computed(() => dialog.connect(state.value, send, normalizeProps));
+
+const mounted = ref(false)
+onMounted(() => { mounted.value = true })
 </script>
