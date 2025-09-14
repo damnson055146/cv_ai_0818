@@ -1,9 +1,19 @@
 /**
  * Fix-in-Chat Content Generate API（统一走 /api/ai 转发，无模板/Mock）
  */
+import { defineEventHandler, readBody, setResponseStatus } from 'h3'
 
 export default defineEventHandler(async (event) => {
   try {
+    // Guard: block editing when client declares chat/ask mode and strict flag enabled
+    const cfg = useRuntimeConfig(event) as any
+    const strict = !!cfg?.public?.chatbot?.strictAskNoEdit
+    const modeHeader = (event.node.req.headers['x-chatbot-mode'] || '').toString().toLowerCase().trim()
+    if (strict && modeHeader === 'ask') {
+      setResponseStatus(event, 409)
+      return { success: false, error: 'Chat mode forbids content generation that edits the document' }
+    }
+
     const body = await readBody(event)
     const userPrompt: string = body?.prompt || ''
     const context = body?.context || {}

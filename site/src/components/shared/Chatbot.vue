@@ -465,6 +465,14 @@ function toggleSettings() {
 function setMode(mode: 'ask' | 'edit') {
   currentMode.value = mode;
   console.log(`[Chatbot] 切换到${mode === 'ask' ? '问答' : '编辑'}模式`);
+  // When switching to chat/ask mode, ensure no edit-related state remains active
+  if (mode === 'ask') {
+    try {
+      if (diffPreviewVisible.value) diffPreviewVisible.value = false;
+      if (fixMode.value) resetFixMode();
+      showSelectionCard.value = false;
+    } catch {}
+  }
 }
 
 const canSend = computed(() => draft.value.trim().length > 0 && !isThinking.value);
@@ -476,6 +484,12 @@ async function handleSend() {
   pushMessage({ role: "user", content: text });
   // Reset input height after sending long messages
   nextTick(() => resetInputHeight());
+  
+  // In chat mode, never trigger edit or Fix-in-Chat flows
+  if (currentMode.value === 'ask') {
+    simulateAssistant(text);
+    return;
+  }
   
   // 检查是否在 Fix-in-Chat 模式
   if (fixMode.value) {
@@ -2023,6 +2037,7 @@ async function processFixInChatMessage(userText: string) {
     
     const response = await $fetch('/api/content-generate', {
       method: 'POST',
+      headers: { 'x-chatbot-mode': currentMode.value },
       body: {
         prompt,
         context: {

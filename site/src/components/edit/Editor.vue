@@ -371,6 +371,9 @@ const initializeWorkspaceIntegration = () => {
   // Fix-in-Chat 事件监听
   window.addEventListener('apply-fix-suggestion', handleApplyFixSuggestion);
   
+  // MCP: 开始轮询后端命令队列
+  startEditorCommandPolling();
+  
   // 清理事件监听器
   onBeforeUnmount(() => {
     document.removeEventListener('workspace-ai-result', handleAiResult);
@@ -378,6 +381,101 @@ const initializeWorkspaceIntegration = () => {
     document.removeEventListener('get-document-structure', handleGetDocumentStructure);
     window.removeEventListener('apply-fix-suggestion', handleApplyFixSuggestion);
   });
+};
+
+/**
+ * 替换全文
+ */
+const replaceFullDocumentText = (text: string) => {
+  if (!editor) return;
+  const ed = editor.editor;
+  const model = ed.getModel();
+  if (!model) return;
+  const fullRange = {
+    startLineNumber: 1,
+    startColumn: 1,
+    endLineNumber: model.getLineCount(),
+    endColumn: model.getLineMaxColumn(model.getLineCount())
+  } as any;
+  ed.executeEdits('mcp-replace-document', [{ range: fullRange, text, forceMoveMarkers: true }]);
+  ed.setPosition({ lineNumber: 1, column: 1 } as any);
+};
+
+/**
+ * MCP 命令轮询与应用
+ */
+let commandPollTimer: any = null;
+type IncomingEditorCommand =
+  | { type: 'replace'; target: 'selection' | 'document'; text: string }
+  | { type: 'smart_edit'; target: 'selection' | 'document'; prompt: string };
+
+const getClientId = (): string => {
+  const key = 'mcp_client_id';
+  let id = sessionStorage.getItem(key);
+  if (!id) {
+    id = `cli_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    sessionStorage.setItem(key, id);
+  }
+  return id;
+};
+
+const buildMcpHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    const token = (window as any).__NUXT__?.config?.public?.mcp?.queueToken;
+    if (token) headers['x-mcp-token'] = String(token);
+  } catch {}
+  return headers;
+};
+
+const startEditorCommandPolling = () => {
+  if (typeof window === 'undefined') return;
+  if (commandPollTimer) return;
+  const clientId = getClientId();
+  const poll = async () => {
+    try {
+      const base = (window as any).__NUXT__?.config?.app?.baseURL || '/';
+      const url = `${base.endsWith('/') ? base : base + '/'}api/editor-commands?clientId=${encodeURIComponent(clientId)}`;
+      const res = await fetch(url, { headers: buildMcpHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        const commands = Array.isArray(data?.commands) ? data.commands : [];
+        for (const cmd of commands) {
+          await applyEditorCommand(cmd as IncomingEditorCommand);
+        }
+      }
+    } catch (e) {
+      console.warn('[Editor] MCP command polling failed:', e);
+    } finally {
+      commandPollTimer = setTimeout(poll, 2000);
+    }
+  };
+  poll();
+};
+
+const applyEditorCommand = async (cmd: IncomingEditorCommand) => {
+  if (cmd.type === 'replace') {
+    if (cmd.target === 'selection') replaceSelectionText(cmd.text);
+    else replaceFullDocumentText(cmd.text);
+    return;
+  }
+  if (cmd.type === 'smart_edit') {
+    const selected = getCurrentSelectionText();
+    const body: any = { prompt: cmd.prompt, context: { selectedText: selected } };
+    try {
+      const base = (window as any).__NUXT__?.config?.app?.baseURL || '/';
+      const url = `${base.endsWith('/') ? base : base + '/'}api/content-generate`;
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await res.json();
+      const text = String(data?.content || '');
+      if (text) {
+        if (cmd.target === 'selection') replaceSelectionText(text);
+        else replaceFullDocumentText(text);
+      }
+    } catch (e) {
+      console.warn('[Editor] smart_edit failed:', e);
+    }
+  }
 };
 
 /**

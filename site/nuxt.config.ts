@@ -39,6 +39,8 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     openaiApiKey: process.env.OPENAI_API_KEY || "",
+    // Token for MCP queue API auth (optional)
+    mcpQueueToken: process.env.MCP_QUEUE_TOKEN || "",
     // SiliconFlow server-side key (preferred: server-only)
     siliconFlowApiKey: process.env.SILICON_FLOW_API_KEY || "",
     public: {
@@ -52,6 +54,8 @@ export default defineNuxtConfig({
       chatbot: {
         provider: "openai", // control in config file
         model: "gpt-5", // default model id
+        // If true, backend will reject any edit/apply requests when client declares chat/ask mode
+        strictAskNoEdit: String(process.env.NUXT_PUBLIC_CHATBOT_STRICT_ASK_NO_EDIT ?? 'true').toLowerCase() !== 'false',
         // For OpenAI compatible APIs, use full endpoint path for chat completions
         // e.g. 'https://api.openai.com/v1/chat/completions'
         // or 3rd party compatible base.
@@ -108,6 +112,11 @@ export default defineNuxtConfig({
           },
           
         ]
+      } as any,
+      // MCP public config for client polling
+      mcp: {
+        enabled: true,
+        queueToken: process.env.MCP_QUEUE_TOKEN || ""
       }
     }
   },
