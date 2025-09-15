@@ -44,6 +44,8 @@ export default defineNuxtConfig({
     // SiliconFlow server-side key (preferred: server-only)
     siliconFlowApiKey: process.env.SILICON_FLOW_API_KEY || "",
     public: {
+      // FastAPI backend base (absolute). Default to local FastAPI in dev if env missing.
+      backendBase: (process.env.FASTAPI_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, ''),
       // SiliconFlow client-visible helpers (no secrets)
       // Lowercase keys are what server reads: config.public.siliconFlowBaseUrl / siliconFlowModel
       siliconFlowBaseUrl: process.env.SILICON_FLOW_BASE_URL || "https://api.siliconflow.cn/v1",
@@ -62,7 +64,7 @@ export default defineNuxtConfig({
         // For OpenAI compatible APIs, use full endpoint path for chat completions
         // e.g. 'https://api.openai.com/v1/chat/completions'
         // or 3rd party compatible base.
-        apiBase: "/api/ai", // absolute path to avoid baseURL-prefixed HTML
+        apiBase: `${(process.env.FASTAPI_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, '')}/api/ai`,
         gpt5Extras: false, // include gpt-5 extras (verbosity/reasoning_effort) by default
         responseFormat: {
           enabled: false,

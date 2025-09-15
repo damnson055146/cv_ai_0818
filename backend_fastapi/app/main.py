@@ -1,15 +1,37 @@
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import os
 import httpx
 
+# Load envs from backend_fastapi/.env if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
+except Exception:
+    pass
+
 app = FastAPI(title="cv-ai FastAPI backend")
 
+# CORS for frontend dev (Nuxt at :3000)
+_cors_origins_env = os.getenv("FASTAPI_CORS_ALLOW_ORIGINS", "").strip()
+if _cors_origins_env:
+    _origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
+else:
+    _origins = [
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+    ]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/api/ping")
-async def ping():
-    return {"ok": True}
-
+# === Responses API helpers ===
+OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 def get_openai_key() -> str:
     key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -18,85 +40,146 @@ def get_openai_key() -> str:
     return key
 
 
-def normalize_openai_payload(body: dict) -> tuple[str, dict, bool]:
-    endpoint_hint = body.get("endpoint") if isinstance(body.get("endpoint"), str) else None
-    payload = body.get("body") or body
-
-    fallback_model = os.getenv("FALLBACK_MODEL", "o3")
-    model = str(payload.get("model") or fallback_model)
-
-    use_responses_api = (endpoint_hint == "responses") or (model.lower().startswith("o3"))
-
-    # Normalize reasoning effort aliases
-    try:
-        allowed = {"low", "medium", "high"}
-        alias = {"minimal": "low", "default": "medium", "deep": "high"}
-        if isinstance(payload.get("reasoning"), dict):
-            eff = str(payload["reasoning"].get("effort", "")).lower()
-            if eff and eff not in allowed:
-                payload["reasoning"]["effort"] = alias.get(eff, "medium")
-        elif isinstance(payload.get("reasoning_effort"), str):
-            eff = str(payload["reasoning_effort"]).lower()
-            payload["reasoning"] = {"effort": alias.get(eff, eff if eff in allowed else "medium")}
-            payload.pop("reasoning_effort", None)
-    except Exception:
-        pass
-
-    if use_responses_api:
-        # responses API prefers input/max_output_tokens
-        if not payload.get("input") and isinstance(payload.get("messages"), list):
-            payload["input"] = "\n\n".join(
-                f"{str(m.get('role','user')).upper()}: {m.get('content','')}" for m in payload["messages"]
-            )
-            payload.pop("messages", None)
-        if payload.get("max_tokens") and not payload.get("max_output_tokens"):
-            payload["max_output_tokens"] = payload.pop("max_tokens")
+def build_responses_input(
+    messages: list[dict] | None = None,
+    system_text: str | None = None,
+    user_text: str | None = None,
+    file_ids: list[str] | None = None,
+):
+    input_msgs: list[dict] = []
+    if isinstance(messages, list) and messages:
+        for m in messages:
+            role = str(m.get("role") or "user")
+            txt = str(m.get("content") or "")
+            content = ([{"type": "text", "text": txt}] if txt else [])
+            input_msgs.append({"role": role, "content": content})
     else:
-        # chat completions prefers messages; map input if present
-        is_gpt5 = model.lower().startswith("gpt-5")
-        is_gpt41 = "gpt-4.1" in model.lower()
-        if (is_gpt5 or is_gpt41) and payload.get("max_tokens") and not payload.get("max_completion_tokens"):
-            payload["max_completion_tokens"] = payload.pop("max_tokens")
-        if not payload.get("messages") and isinstance(payload.get("input"), str):
-            payload["messages"] = [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": payload.pop("input")},
-            ]
+        input_msgs = [
+            {"role": "system", "content": [{"type": "text", "text": (system_text or "You are a helpful assistant.")}]} ,
+            {"role": "user", "content": [{"type": "text", "text": (user_text or "")}]} ,
+        ]
+    if file_ids:
+        for m in reversed(input_msgs):
+            if m.get("role") == "user":
+                m["content"].extend({"type": "input_file", "file_id": fid} for fid in file_ids)
+                break
+    return input_msgs
 
-    payload["model"] = model
-    url = "https://api.openai.com/v1/responses" if use_responses_api else "https://api.openai.com/v1/chat/completions"
-    return url, payload, use_responses_api
+
+async def post_responses(api_key: str, payload: dict, timeout: float = 120.0):
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post(
+            OPENAI_RESPONSES_URL,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+        )
+    return r
+
+
+def build_responses_payload(body: dict) -> dict:
+    model = str(body.get("model") or os.getenv("DEFAULT_FASTAPI_MODEL", "gpt-5"))
+
+    file_ids: list[str] = []
+    if isinstance(body.get("file_ids"), list):
+        file_ids = [str(x) for x in body["file_ids"] if isinstance(x, (str, bytes))]
+
+    messages = body.get("messages") if isinstance(body.get("messages"), list) else None
+    system_text = body.get("instructions")
+    user_text = None
+    if isinstance(body.get("input"), str):
+        user_text = body.get("input")
+    elif isinstance(body.get("prompt"), str):
+        user_text = body.get("prompt")
+
+    input_payload = body.get("input") if isinstance(body.get("input"), list) else None
+    if not input_payload:
+        input_payload = build_responses_input(messages, system_text, user_text, file_ids)
+
+    response_format = body.get("response_format")
+    max_out = body.get("max_output_tokens")
+    if max_out is None:
+        max_out = body.get("max_tokens", body.get("max_completion_tokens"))
+
+    reasoning = body.get("reasoning")
+    if reasoning is None and isinstance(body.get("reasoning_effort"), str):
+        eff = body["reasoning_effort"].lower()
+        alias = {"minimal": "low", "default": "medium", "deep": "high"}
+        reasoning = {"effort": alias.get(eff, eff if eff in {"low", "medium", "high"} else "medium")}
+
+    out = {"model": model, "input": input_payload}
+    if response_format and isinstance(response_format, dict):
+        fmt_type = response_format.get("type")
+        if fmt_type:
+            text_fmt = {"format": fmt_type}
+            if fmt_type == "json_schema" and isinstance(response_format.get("json_schema"), dict):
+                text_fmt["json_schema"] = response_format["json_schema"]
+            out["text"] = text_fmt
+    if max_out is not None:
+        try:
+            cap = int(os.getenv("RESPONSES_MAX_OUTPUT_TOKENS", "4096"))
+        except Exception:
+            cap = 4096
+        try:
+            req = int(max_out)
+        except Exception:
+            req = 2048
+        out["max_output_tokens"] = max(16, min(req, cap))
+    if reasoning:
+        out["reasoning"] = reasoning
+    if isinstance(body.get("metadata"), dict):
+        out["metadata"] = body["metadata"]
+    if isinstance(body.get("previous_response_id"), str) and body["previous_response_id"]:
+        out["previous_response_id"] = body["previous_response_id"]
+    return out
 
 
 @app.post("/api/ai")
 async def proxy_ai(req: Request):
     body = await req.json()
-    url, payload, _ = normalize_openai_payload(body)
+    body.pop("use_agents", None)
     api_key = get_openai_key()
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        r = await client.post(url, headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }, json=payload)
+
+    has_input_list = isinstance(body.get("input"), list)
+    has_messages = isinstance(body.get("messages"), list)
+    has_prompt_like = isinstance(body.get("input"), str) or isinstance(body.get("prompt"), str)
+    if not (has_input_list or has_messages or has_prompt_like):
+        raise HTTPException(status_code=400, detail="input(list) or messages or prompt/input(string) is required")
+
+    payload = build_responses_payload(body)
+    # Default schema if frontend didn't provide one
+    if "text" not in payload:
+        payload["text"] = {
+            "format": "json_schema",
+            "json_schema": {
+                "name": "DefaultOutput",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["result"],
+                    "properties": {
+                        "result": {"type": "string"},
+                        "reasoning_summary": {"type": "string"}
+                    }
+                }
+            }
+        }
+
+    r = await post_responses(api_key, payload, timeout=120.0)
     content_type = r.headers.get("content-type", "application/json")
     if "application/json" in content_type:
         return JSONResponse(status_code=r.status_code, content=r.json())
     return JSONResponse(status_code=r.status_code, content={"text": r.text})
 
 
-def get_siliconflow_conf():
-    key = os.getenv("SILICON_FLOW_API_KEY", "").strip()
-    base = os.getenv("SILICON_FLOW_BASE_URL", "https://api.siliconflow.cn/v1").strip()
-    model = os.getenv("SILICON_FLOW_MODEL", "Qwen/Qwen2.5-7B-Instruct").strip()
-    if not key:
-        raise HTTPException(status_code=500, detail="SILICON_FLOW_API_KEY is missing")
-    return key, base, model
-
-
 @app.post("/api/siliconflow")
 async def siliconflow(req: Request):
     body = await req.json()
-    key, base, default_model = get_siliconflow_conf()
+    key = os.getenv("SILICON_FLOW_API_KEY", "").strip()
+    base = os.getenv("SILICON_FLOW_BASE_URL", "https://api.siliconflow.cn/v1").strip()
+    default_model = os.getenv("SILICON_FLOW_MODEL", "Qwen/Qwen2.5-7B-Instruct").strip()
+    if not key:
+        raise HTTPException(status_code=500, detail="SILICON_FLOW_API_KEY is missing")
     payload = {
         "model": body.get("model") or default_model,
         "messages": body.get("messages") or [{"role": "user", "content": body.get("input") or body.get("prompt") or ""}],
@@ -146,37 +229,148 @@ async def content_generate(req: Request):
     user_prompt = str(body.get("prompt") or "")
     context = body.get("context") or {}
     selected = str(context.get("selectedText") or "")
+    model = str(body.get("model") or os.getenv("DEFAULT_FASTAPI_MODEL", "gpt-5"))
+    max_tokens = int(body.get("maxTokensPerChunk") or 1536)
+
+    if not user_prompt and not selected:
+        raise HTTPException(status_code=400, detail="prompt or selectedText is required")
+
     composed = (
-        f"指令: {user_prompt}\n\n原文:\n{selected}\n\n只返回修改后的文本。" if selected else f"{user_prompt}\n\n只返回修改后的文本。"
+        f"指令: {user_prompt}\n\n原文:\n{selected}\n\n只返回修改后的文本。"
+        if selected else f"{user_prompt}\n\n只返回修改后的文本。"
     )
 
-    url, payload, _ = normalize_openai_payload({
-        "body": {
-            "model": os.getenv("DEFAULT_FASTAPI_MODEL", "gpt-4o-mini"),
-            "messages": [{"role": "user", "content": composed}],
-            "max_tokens": 2048,
-            "temperature": 0.7,
-        }
-    })
     api_key = get_openai_key()
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        r = await client.post(url, headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }, json=payload)
+    payload = {
+        "model": model,
+        "input": [
+            {"role": "system", "content": [{"type": "text", "text": "You are a professional editor. Return ONLY the final text."}]},
+            {"role": "user", "content": [{"type": "text", "text": composed}]}
+        ],
+        "max_output_tokens": max_tokens
+    }
+
+    r = await post_responses(api_key, payload, timeout=60.0)
     if "application/json" in (r.headers.get("content-type", "")):
         data = r.json()
-        content = (
-            (data.get("choices") or [{}])[0].get("message", {}).get("content")
-            or data.get("reply")
-            or (data if isinstance(data, str) else "")
-        )
+        output_text = data.get("output_text")
+        if not output_text:
+            try:
+                chunks = data.get("output", [])
+                output_text = "".join(
+                    c_part.get("text", "")
+                    for item in chunks
+                    for c_part in (item.get("content") or [])
+                    if isinstance(c_part, dict)
+                )
+            except Exception:
+                output_text = ""
     else:
-        content = r.text
+        output_text = r.text
 
-    content = (content or "").strip()
-    if not content:
+    output_text = (output_text or "").strip()
+    if not output_text:
         raise HTTPException(status_code=500, detail="AI 无有效输出")
-    return {"success": True, "content": content, "method": "ai-proxy"}
+    return {"success": True, "content": output_text, "method": "responses"}
 
+# Upload file to OpenAI Files API (base64 body)
+@app.post("/api/files/upload")
+async def files_upload(req: Request):
+    body = await req.json()
+    name = str(body.get("name") or "upload.bin")
+    b64 = str(body.get("contentBase64") or "")
+    purpose = str(body.get("purpose") or "user_data")
+    if not b64:
+        raise HTTPException(status_code=400, detail="contentBase64 is required")
+
+    api_key = get_openai_key()
+    try:
+        file_bytes = httpx._models.b64decode(b64)  # type: ignore
+    except Exception:
+        try:
+            import base64
+            file_bytes = base64.b64decode(b64)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid base64 content")
+
+    files = {
+        "file": (name, file_bytes, "application/octet-stream"),
+        "purpose": (None, purpose),
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(
+            "https://api.openai.com/v1/files",
+            headers={"Authorization": f"Bearer {api_key}"},
+            files=files,
+        )
+    if "application/json" in (r.headers.get("content-type", "")):
+        data = r.json()
+    else:
+        data = {"text": r.text}
+    if r.status_code >= 400:
+        return JSONResponse(status_code=r.status_code, content={"status": "error", "error": data})
+    return {"status": "ok", "file": data}
+
+
+# Convert to Markdown using AI (FastAPI version)
+@app.post("/api/convert-to-md")
+async def convert_to_md(req: Request):
+    body = await req.json()
+    raw = str(body.get("text") or "")
+    if not raw.strip():
+        return {"ok": False, "error": "empty_text"}
+
+    hint = str(body.get("hint") or "auto")
+    model = str(body.get("model") or os.getenv("DEFAULT_FASTAPI_MODEL", "gpt-4o-mini"))
+    max_tokens = int(body.get("maxTokensPerChunk") or 1536)
+
+    # simple paragraph chunking
+    paras = raw.split("\n\n")
+    chunks = []
+    MAX_CHARS = 2000
+    buf = ""
+    for p in paras:
+        add = ("\n\n" + p) if buf else p
+        if len(buf + add) > MAX_CHARS:
+            if buf:
+                chunks.append(buf)
+            buf = p
+        else:
+            buf = buf + add
+    if buf:
+        chunks.append(buf)
+
+    system_prompt = (
+        "You are a professional document formatter. "
+        "Convert the given input to clean, valid Markdown ONLY. "
+        "Preserve: headings (#), lists, tables, links, emphasis, code blocks. "
+        "Keep original language and factual content. Do NOT invent content. "
+        "Do not add explanations or code fences. Return Markdown only."
+    )
+    api_key = get_openai_key()
+
+    outputs = []
+    payload = {"body": {"model": model}}
+    for i, piece in enumerate(chunks):
+        user_prompt = f"Document type hint: {hint}.\nReturn ONLY Markdown for this chunk {i + 1}/{len(chunks)}.\n\n<INPUT>\n{piece}\n</INPUT>"
+        payload["body"]["messages"] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        payload["body"]["max_output_tokens"] = max_tokens
+
+        r = await post_responses(api_key, payload, timeout=60.0)
+        if "application/json" in (r.headers.get("content-type", "")):
+            data = r.json()
+            md = (
+                (data.get("choices") or [{}])[0].get("message", {}).get("content")
+                or data.get("reply")
+                or ""
+            )
+        else:
+            md = r.text
+        outputs.append((md or piece).strip())
+
+    markdown = "\n\n".join(outputs)
+    return {"ok": True, "markdown": markdown, "model": model}
 

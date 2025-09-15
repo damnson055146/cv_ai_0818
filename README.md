@@ -83,3 +83,40 @@ This project is licensed under [MIT](LICENSE) license.
 Made with ☕ by Junian.
 Appreciate the effort from Junian --Pan
 
+# CV AI Project
+
+## FastAPI + OpenAI Agents SDK Migration
+
+This project has migrated AI endpoints from Node (Nuxt server routes) to a FastAPI backend using OpenAI Agents SDK Sessions.
+
+### Setup
+
+1) Backend (FastAPI)
+- Install deps:
+  - `pip install -r backend_fastapi/requirements.txt`
+- Set env:
+  - `OPENAI_API_KEY=...`
+  - optional: `AGENTS_FALLBACK_TO_PROXY=true`
+- Run:
+  - `uvicorn backend_fastapi.app.main:app --host 0.0.0.0 --port 8000`
+
+2) Frontend (Nuxt)
+- Set `.env`:
+  - `FASTAPI_BASE_URL=http://127.0.0.1:8000`
+  - `USE_AGENTS=true`
+- Start:
+  - `pnpm dev` in `site/`
+
+### Endpoints
+- FastAPI now serves: `/api/ai`, `/api/files/upload`, `/api/content-generate`, `/api/convert-to-md`.
+- Frontend calls are unified to point at `FASTAPI_BASE_URL` when provided.
+
+### Removed Node endpoints
+The following Nuxt server routes have been removed in favor of FastAPI:
+- `site/src/server/api/ai.post.ts`
+- `site/src/server/api/content-generate.post.ts`
+- `site/src/server/api/convert-to-md.post.ts`
+
+### Sessions
+Requests include `use_agents: true` and a `session_id` (document scoped) to enable Agents SDK Sessions memory, per the official docs.
+

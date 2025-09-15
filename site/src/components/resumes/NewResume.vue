@@ -136,6 +136,7 @@ const createBy = async (docType: Doc, lang: Lang) => {
   if (docType !== 'ps') {
     const key = buildTemplateKey(docType, lang);
     const id = await newResume(key);
+    try { localStorage.setItem('doc_meta_' + id, JSON.stringify({ docType: docType === 'rec' ? 'rec' : 'cv', lang })) } catch {}
     router.push(localePath(`/edit/${id}`));
     return
   }

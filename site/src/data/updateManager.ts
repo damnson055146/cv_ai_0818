@@ -371,7 +371,10 @@ export class UpdateManager {
       throw new Error('Fetch is not available (server-side context)')
     }
 
-    const response = await fetch('/api/intent-parse', {
+    const runtime: any = (globalThis as any).__NUXT__?.config || { public: {} }
+    const backendBase = (runtime.public as any)?.backendBase || ''
+    const ipUrl = backendBase ? backendBase.replace(/\/$/, '') + '/api/intent-parse' : '/api/intent-parse'
+    const response = await fetch(ipUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request)
@@ -389,7 +392,10 @@ export class UpdateManager {
       throw new Error('Fetch is not available (server-side context)')
     }
 
-    const response = await fetch('/api/content-generate', {
+    const runtime: any = (globalThis as any).__NUXT__?.config || { public: {} }
+    const backendBase = (runtime.public as any)?.backendBase || ''
+    const cgUrl = backendBase ? backendBase.replace(/\/$/, '') + '/api/content-generate' : '/api/content-generate'
+    const response = await fetch(cgUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request)

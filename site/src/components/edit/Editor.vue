@@ -486,8 +486,9 @@ const applyEditorCommand = async (cmd: IncomingEditorCommand) => {
     const selected = getCurrentSelectionText();
     const body: any = { prompt: cmd.prompt, context: { selectedText: selected } };
     try {
-      const base = (window as any).__NUXT__?.config?.app?.baseURL || '/';
-      const url = `${base.endsWith('/') ? base : base + '/'}api/content-generate`;
+      const runtime: any = (window as any).__NUXT__?.config || { public: {} }
+      const backendBase = (runtime.public as any)?.backendBase || ''
+      const url = backendBase ? backendBase.replace(/\/$/, '') + '/api/content-generate' : `${((window as any).__NUXT__?.config?.app?.baseURL || '/').replace(/\/$/, '')}/api/content-generate`;
       const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
       const text = String(data?.content || '');

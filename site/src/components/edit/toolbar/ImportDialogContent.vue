@@ -48,6 +48,9 @@
 </template>
 
 <script lang="ts" setup>
+const runtime = useRuntimeConfig()
+const backendBase: string = (runtime.public as any)?.backendBase || ''
+const convertToMdApi = backendBase ? backendBase.replace(/\/$/, '') + '/api/convert-to-md' : '/api/convert-to-md'
 import * as fileUpload from "@zag-js/file-upload";
 import { normalizeProps, useMachine } from "@zag-js/vue";
 import { fetchFile } from "@renovamen/utils";
@@ -89,7 +92,7 @@ const [state, send] = useMachine(
             startParsing('AI 正在规整为 Markdown ...')
             const txt = (reader.result as string) || ''
             try {
-              const resp: any = await $fetch('/api/convert-to-md', {
+              const resp: any = await $fetch(convertToMdApi, {
                 method: 'POST',
                 body: { text: txt, hint: 'auto', model: 'gpt-4o-mini' }
               })
@@ -158,7 +161,7 @@ const [state, send] = useMachine(
               // AI 规整为更干净的 Markdown（可选，失败则回退）
               try {
                 parseMsg.value = 'AI 正在规整为 Markdown ...'
-                const resp: any = await $fetch('/api/convert-to-md', {
+                const resp: any = await $fetch(convertToMdApi, {
                   method: 'POST',
                   body: { text: md, hint: 'auto', model: 'gpt-4o-mini' }
                 })
@@ -237,7 +240,7 @@ const [state, send] = useMachine(
               // AI 规整
               try {
                 parseMsg.value = 'AI 正在规整为 Markdown ...'
-                const resp: any = await $fetch('/api/convert-to-md', {
+                const resp: any = await $fetch(convertToMdApi, {
                   method: 'POST',
                   body: { text: md, hint: 'auto', model: 'gpt-4o-mini' }
                 })

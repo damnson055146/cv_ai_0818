@@ -21,11 +21,17 @@ export default defineEventHandler(async (event) => {
     }
     const { ps_requirement, guidance_outline, guidance_element } = defaults.data || {}
 
-    // Helper to call unified AI proxy
+    // Helper to call FastAPI backend when configured
+    const runtime = useRuntimeConfig(event) as any
+    const backendBase = (runtime.public?.backendBase || '').toString()
+    const aiUrl = backendBase ? backendBase.replace(/\/$/, '') + '/api/ai' : '/api/ai'
     const callAI = async (messages: Array<{ role: 'system'|'user'|'assistant'; content: string }>, maxTokens = 1600) => {
-      const res: any = await $fetch('/api/ai', {
+      const res: any = await $fetch(aiUrl, {
         method: 'POST',
-        body: { model: 'gpt-4o', messages, temperature: 0.3, max_tokens: maxTokens }
+        body: {
+          model: 'gpt-5', messages,  max_tokens: maxTokens,
+          use_agents: true
+        }
       })
       const text = (res?.choices?.[0]?.message?.content || res?.reply || '').toString()
       return text

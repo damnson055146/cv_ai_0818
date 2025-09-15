@@ -204,7 +204,7 @@
           </div>
           <div class="space-y-2">
             <label class="text-xs font-medium">PDF</label>
-            <input type="file" accept="application/pdf" @change="onPickPdf" />
+            <input type="file" accept="application/pdf" @change="onPickAnyFile" />
             <div class="text-xs text-light-c flex flex-wrap gap-2 items-center">
               <span v-if="uploadedFileIds.length === 0">None</span>
               <span v-for="(fid, i) in uploadedFileIds" :key="fid" class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700">
@@ -306,6 +306,28 @@
 
       <!-- Input -->
       <form class="px-4 pb-4 pt-2 bg-c border-t border-light-c" @submit.prevent="handleSend">
+        <!-- Attachments preview -->
+        <div v-if="hasAnyAttachments" class="px-1 pb-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <!-- Image thumbs -->
+            <div v-for="(src, idx) in imageDataUrls" :key="'img-'+idx" class="relative w-16 h-16">
+              <img :src="src" class="w-16 h-16 object-cover rounded border border-light-c" />
+              <button type="button" class="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-black/70 text-white text-xs" @click="removeImage(idx)">×</button>
+            </div>
+            <!-- Uploaded files chips -->
+            <div v-for="(f, i) in uploadedFiles" :key="'f-'+f.id" class="inline-flex items-center gap-1 px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 border border-light-c text-xs">
+              <span class="i-ph:file-text text-gray-600 dark:text-gray-300" />
+              <span class="max-w-48 truncate">{{ f.name || f.id }}</span>
+              <button type="button" class="ml-1" @click="removeUploadedFile(i)">×</button>
+            </div>
+            <!-- Inline text snippets -->
+            <div v-for="(snip, i) in inlineTextSnippets" :key="'snip-'+i" class="inline-flex items-center gap-1 px-2 py-1 rounded bg-gray-50 dark:bg-gray-700/40 border border-light-c text-xs">
+              <span class="i-ph:file-text text-gray-600 dark:text-gray-300" />
+              <span class="max-w-48 truncate">{{ snip.name }} ({{ snip.text.length }} chars)</span>
+              <button type="button" class="ml-1" @click="removeSnippet(i)">×</button>
+            </div>
+          </div>
+        </div>
         <div
           class="w-full rounded-full border border-light-c bg-white dark:bg-slate-700 text-black dark:text-white shadow-c flex items-center gap-3 px-3 py-1.5 relative"
           :class="dragActive ? 'ring-2 ring-blue-400 border-blue-400' : ''"
@@ -316,16 +338,12 @@
           <button type="button" class="circle size-7 hover:bg-gray-100 dark:hover:bg-slate-600" title="Add" @click="toggleAddMenu" ref="plusBtnRef">
             <span class="i-ph:plus-bold text-gray-600 dark:text-gray-300" />
           </button>
-          <!-- Hidden pickers -->
-          <input ref="imagePickerRef" type="file" accept="image/*" multiple class="hidden" @change="onPickImages" />
-          <input ref="pdfPickerRef" type="file" accept="application/pdf" class="hidden" @change="onPickPdf" />
-          <input ref="docPickerRef" type="file" accept="application/pdf,.md,text/plain,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden" @change="onPickDoc" />
-          <!-- Add menu -->
+          <!-- Hidden picker (single) -->
+          <input ref="anyPickerRef" type="file" accept="image/*,application/pdf,.md,text/plain,.txt,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden" @change="onPickAnyFile" multiple />
+          <!-- Add menu: single entry -->
           <div v-if="showAddMenu" class="chatbot-add-menu absolute left-2 bottom-12 z-50 bg-c border border-light-c rounded-md shadow px-2 py-2 w-48">
-            <button type="button" class="w-full text-left text-sm px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-600" @click="openImagePicker">上传图片…</button>
-            <button type="button" class="w-full text-left text-sm px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-600" @click="openPdfPicker">上传 PDF…</button>
-            <button type="button" class="w-full text-left text-sm px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-600" @click="openDocPicker">上传文档（PDF/MD/TXT/DOCX）…</button>
-            <div class="text-[11px] text-light-c px-2 pt-1">或将图片/文档拖拽到此输入框</div>
+            <button type="button" class="w-full text-left text-sm px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-600" @click="openAnyPicker">上传文件（图片/PDF/DOCX/DOC/MD/TXT）…</button>
+            <div class="text-[11px] text-light-c px-2 pt-1">或将文件拖拽到此输入框</div>
           </div>
 
           <textarea
@@ -403,6 +421,116 @@ const mounted = ref(false)
 
 // 当前文档ID（来源于路由）
 const route = useRoute()
+// Resolve document type (cv | rec | ps) and ps sub (outline|body)
+const docMeta = computed(() => {
+  try {
+    const id = route.params?.id as string
+    if (!id) return { docType: 'cv', sub: null as any }
+    // PS meta
+    const psRaw = localStorage.getItem('ps_doc_meta_' + id)
+    if (psRaw) {
+      const m = JSON.parse(psRaw)
+      if (m?.docType === 'ps') return { docType: 'ps', sub: m?.sub || null }
+    }
+    // CV/REC meta
+    const raw = localStorage.getItem('doc_meta_' + id)
+    if (raw) {
+      const m = JSON.parse(raw)
+      if (m?.docType === 'rec') return { docType: 'rec', sub: null }
+      if (m?.docType === 'cv') return { docType: 'cv', sub: null }
+    }
+  } catch {}
+  return { docType: 'cv', sub: null as any }
+})
+
+function buildAgentInstructions(): string {
+  const meta = docMeta.value
+  const commonFooter = [
+    'You MUST return a single JSON object with keys: steps (array of strings), targets (array), result (string), reasoning_summary (string).',
+    'targets[].strategy is one of: selection | match | section.',
+    "For strategy 'match', include exact 'text' to locate.",
+    "For strategy 'section', include a 'section' name if known.",
+    'Do NOT include chain-of-thought; provide a concise reasoning_summary only.'
+  ].join(' ')
+  if (meta.docType === 'cv') {
+    return [
+      'You are an expert CV editor. Improve clarity, quantify achievements, preserve Markdown structure and sections.',
+      'Focus on action verbs, metrics, impact; keep factual accuracy and language style consistent.',
+      commonFooter
+    ].join(' ')
+  }
+  if (meta.docType === 'rec') {
+    return [
+      '# 推荐信撰写专家提示词\n\n## 角色定义\n\n你是一位经验丰富的**推荐人**，经常为你接触过的学生撰写研究生申请推荐信。你严格遵循推荐人视角：**仅基于亲眼所见、亲身互动或直接公开展示**的学生表现进行评价，绝不涉及无法观察到的内部细节或私密信息。\n\n## 核心任务\n\n基于输入信息，按工作流程完成：素材整理 → 大纲构思 → 英文推荐信撰写\n\n## 推荐信写作风格\n\n### 1. 语言自然度提升\n\n* **词汇多样化**：使用同义词和近义词替代重复表达，避免模板化痕迹\n* **表达层次丰富**：在保持专业性的前提下，适当使用日常词汇，让语言更自然\n* **微妙变化感**：体现真人写作的自然不完美，避免过于工整的机器感\n* **教学观察口吻**：全稿自然融入1–2处"教师记忆锚点"句式，以增强人情味与可信度（如 "I still remember how she brought her drafts week after week …"、"What impressed me most was not only the result but also her steady improvement."），但避免滥用模板化表达\n\n### 2. 句式结构优化\n\n* **长短句交替**：灵活运用简单句、复合句和并列句，创造节奏感\n* **多样化开头**：避免段落和句子的重复开头模式\n* **自然连接**：在转折和补充处使用恰当的衔接词（however, moreover, particularly等）\n* **从句优先**：使用定语从句、状语从句等替代破折号展开，保持流畅度\n* **避免评分报告腔**：用"观察—印象—判断"的口吻，而非"打分—条目—评语"的口吻\n\n### 3. 语调把控\n\n* **正式中带亲和**：整体保持学术推荐信的严肃性，偶尔加入温和的感叹或强调\n* **避免重复套路**：每段的结构和表达方式应有所不同\n* **真实感增强**：体现推荐人的个人观察和真实感受；必要时用"我观察到/我记得/在我的课堂上"等自然主语提示\n\n### 4. 严格禁止事项\n\n* ❌ 在长句中使用破折号进行展开\n* ❌ 直接引用学生的原话或对话\n* ❌ 描述推荐人无法观察到的技术细节、内部讨论或心理活动\n* ❌ 编造任何数据、成绩、排名或未提及的成果\n* ❌ **术语堆砌**：避免像作业总结那样罗列细碎技术名词（如"几何变换、触发器、多视角系统"等）而不做能力层面的转译\n\n## 工作流程\n\n### 第一步：精准素材提炼\n\n**目标**：筛选2-3个符合推荐人观察视角的核心故事\n\n**筛选标准**：\n\n* ✅ **直接观察场景**（必须符合以下至少一种）：\n\n  * 课堂互动：提问、讨论、演示、小组合作表现\n  * 实验指导：实验操作、数据分析讨论、结果汇报\n  * 办公室/课后交流：答疑、学术讨论、项目进展汇报\n  * 公开展示：答辩、演讲、作品展示、同伴协助\n  * 书面材料：作业、报告、论文草稿的质量体现\n  * 日常观察：学习态度、同伴关系、责任心表现\n\n* ✅ **能力体现重点**：\n\n  * 学术能力：分析思维、创新见解、学习能力\n  * 解决问题：面对挑战的应对方式和效果\n  * 个人品质：责任心、协作精神、自我驱动力\n  * 成长轨迹：从初期到后期的明显进步\n\n* ✅ **概括技术细节（能力化转译）**：\n\n  * 技术描述应符合"推荐人几个月后仍能回忆"的 granularity。每个故事最多保留 1–2 个肉眼可见或演示时明显的要点；**将技术名词转译为能力与效果**（如"组织复杂场景、保证演示连贯性、关注体验的一致性"），避免底层算法/参数细节。\n  * 主要记录学生的行动、迭代过程、与师生互动以及可量化或可现场感知的结果；若必须提及技术名词，用上位概念或效果性措辞总结（如"system-level thinking""user experience awareness"）\n\n**合理补充原则**：\n\n* 可基于提供信息进行符合逻辑的细节扩展\n* 补充内容必须是推荐人可能观察到的场景\n* 示例：学习积极 → 经常在课后讨论问题 → 某次就XX理论进行深入探讨的具体场景\n\n**输出格式**（STAR）：\n\n* **Situation**：具体的观察场景和背景\n* **Task**：学生面临的任务或挑战\n* **Action**：推荐人直接观察到的学生行为和表现\n* **Result**：可观察到的结果与所体现的能力/品质（**用能力化语言收束**）\n\n### 第二步：结构化大纲生成\n\n**写作原则**：\n\n* **Show, don't tell**：通过具体叙述展现能力，而非抽象概括\n* **故事驱动**：每个故事指向一个明确的学生优势\n* **推荐人视角**：始终以观察者身份进行评价和称赞\n* **逻辑递进**：从具体表现到能力总结，层次清晰\n* **观察句嵌入**：在开头或主体中自然嵌入1–2处教学观察句式，避免模板化重复\n\n**大纲结构**：\n\n1. **开头段**：推荐人身份、与学生关系、课程/项目背景、总体印象\n2. **主体段落**（2–3段）：每段对应一个核心故事\n\n   * 场景描述（简洁）\n   * 表现叙述（详细，少术语、重行动与迭代）\n   * 能力体现（明确，系统化思维/沟通协调/稳定改进等）\n   * 推荐人评价（真诚，避免评分类口吻）\n3. **结尾段**：综合评价与**更具人情味的强推荐**（如 *"I am confident that she will excel in graduate studies, and I would be glad to see her join your program."*），并保留可联系意愿\n\n### 第三步：推荐信撰写\n\n**写作要求**：\n\n* 语言：英文，符合学术推荐信规范，避免评分报告腔\n* 数据一致：所有人名(中文名用拼音)、课程、成绩等信息与输入完全一致\n* **技术细节转译**：若出现具体技术名词，统一转写为能力与效果层面的描述\n* **观察句与结尾**：全稿包含1–2处教学观察句式；结尾加入温度更高的个人态度句（如 *"I would be glad to see her join your program."*）\n* 风格参考：严格按照提供的"推荐信示例"风格\n* 格式：纯文本输出，无Markdown格式\n\n## 质量检查清单\n\n撰写完成后，逐项检查：\n\n### 视角一致性检查\n\n* [ ] 所有描述内容均为推荐人可直接观察\n* [ ] 未出现学生内心想法或私人对话\n* [ ] 未涉及不可观察的技术实现细节或团队内部讨论\n\n### 语言质量检查\n\n* [ ] 未使用破折号进行长句展开\n* [ ] 未直接引用学生原话\n* [ ] 句式长短搭配合理，表达自然流畅\n* [ ] 至少包含1–2处自然的教学观察句式，且不显模板化\n* [ ] 全文避免"评分报告"口吻\n\n### 内容完整性检查\n\n* [ ] 每段经历后都有清晰的能力与品质评价（能力化转译到位）\n* [ ] 未出现术语堆砌与作业式罗列\n* [ ] 信息准确，未编造任何数据或成果\n\n### 结构逻辑检查\n\n* [ ] 开头、主体、结尾结构完整\n* [ ] 段落间过渡自然，逻辑清晰\n* [ ] 结尾含更具人情味的强推荐句（如 *"I would be glad to see her join your program."*）\n\n## 输出要求\n\n**格式**：纯文本，结构如下\n\n【素材提炼】\n故事1：\\[STAR格式]\n故事2：\\[STAR格式]\n故事3：\\[STAR格式]\n\n【写作大纲】\n\\[结构化大纲内容]\n\n【推荐信全文】长度：约320词\n\\[完整的英文推荐信]\n\\[中文翻译]\n\n【质量检查确认】\n\\[确认通过的检查项目清单]\n\n\n## 输入信息\n{{学生信息、推荐人信息、相关经历等}}\n\n## 推荐信示例\n{{推荐信参考示例}}',
+      commonFooter
+    ].join(' ')
+  }
+  // ps: elements/outline vs body
+  if (meta.docType === 'ps' && meta.sub === 'outline') {
+    return [
+      'You are preparing Personal Statement materials and outline. Extract key elements, organize into a clear outline.',
+      'Check for missing required info; if missing, reflect in steps and produce result that marks placeholders.',
+      commonFooter
+    ].join(' ')
+  }
+  // ps body
+  return [
+    'You are writing Personal Statement body following the provided outline and materials. Keep paragraphs concise and coherent.',
+    'Check for missing required info; if missing, politely request supplements in steps and still produce best-effort result.',
+    commonFooter
+  ].join(' ')
+}
+
+function tryParseStructuredJSON(text: string): any | null {
+  try {
+    const obj = JSON.parse(text)
+    if (obj && typeof obj === 'object') {
+      // Normalize legacy keys: steps, targets, result, reasoning/summary
+      const out: any = {}
+      out.steps = Array.isArray(obj.steps) ? obj.steps : (typeof obj.thoughts === 'string' ? obj.thoughts.split(/\n+/).filter(Boolean) : [])
+      out.targets = Array.isArray(obj.targets) ? obj.targets : (Array.isArray(obj.spans) ? obj.spans : [])
+      out.result = typeof obj.result === 'string' ? obj.result : (typeof obj.final === 'string' ? obj.final : '')
+      out.reasoning = typeof obj.reasoning === 'string' ? obj.reasoning : (typeof obj.reasoning_summary === 'string' ? obj.reasoning_summary : '')
+      out.reply = typeof obj.reply === 'string' ? obj.reply : (typeof obj.answer === 'string' ? obj.answer : '')
+      // Must have at least result or reasoning
+      if (out.result || out.reasoning || out.reply || out.steps.length || out.targets.length) return out
+    }
+  } catch {}
+  return null
+}
+
+async function openStructuredApplyPreview(targets: any[] | undefined, resultText: string) {
+  const content = await getCurrentDocumentContent()
+  let original = ''
+  let pos: any = null
+  const sel: any = (currentSelectionInfo as any)?.text ? (currentSelectionInfo as any) : null
+  const first = Array.isArray(targets) && targets.length ? targets[0] : null
+  if (first && first.strategy === 'selection' && sel?.text) {
+    original = String(sel.text)
+    try {
+      const idx = content.indexOf(original)
+      if (idx >= 0) pos = { start: idx, end: idx + original.length }
+    } catch {}
+  } else if (first && first.strategy === 'match' && typeof first.text === 'string') {
+    const needle = String(first.text)
+    const idx = content.indexOf(needle)
+    if (idx >= 0) {
+      original = needle
+      pos = { start: idx, end: idx + needle.length }
+    }
+  }
+  if (!original) {
+    // fallback: no target matched, preview whole replacement at top (non-destructive confirm)
+    original = ''
+    pos = { start: 0, end: 0 }
+  }
+  try {
+    fixOriginalText.value = original
+    fixSuggestedText.value = resultText
+    fixPosition.value = pos
+    diffPreviewVisible.value = true
+  } catch {}
+}
 const runtimeConfig = useRuntimeConfig()
 const isHiddenByRoute = computed(() => {
   try {
@@ -446,9 +574,7 @@ const bubbleRef = ref<HTMLButtonElement | null>(null);
 const inputRef = ref<HTMLTextAreaElement | null>(null);
 const scrollRef = ref<HTMLDivElement | null>(null);
 const plusBtnRef = ref<HTMLButtonElement | null>(null)
-const imagePickerRef = ref<HTMLInputElement | null>(null)
-const pdfPickerRef = ref<HTMLInputElement | null>(null)
-const docPickerRef = ref<HTMLInputElement | null>(null)
+const anyPickerRef = ref<HTMLInputElement | null>(null)
 const showAddMenu = ref(false)
 
 // Settings state
@@ -464,6 +590,8 @@ const runtime = useRuntimeConfig();
 const provider = (runtime.public as any)?.chatbot?.provider ?? "openai";
 const defaultModel = (runtime.public as any)?.chatbot?.model ?? "gpt-5";
 const globalApiBase = (runtime.public as any)?.chatbot?.apiBase ?? "";
+// If backendBase is configured, prefer it
+const backendBase: string = (runtime.public as any)?.backendBase || "";
 const models = (runtime.public as any)?.chatbot?.models ?? [];
 const responseFormatDefault = (runtime.public as any)?.chatbot?.responseFormat ?? { enabled: false, schema: null };
 const gpt5ExtrasDefault = (runtime.public as any)?.chatbot?.gpt5Extras ?? false;
@@ -480,19 +608,25 @@ watch([selectedModel, () => modelOptions], () => {
 const currentModel = computed(() => modelOptions.find((m) => m.id === selectedModel.value));
 const generalSpec = computed(() => currentModel.value?.general ?? { max_tokens: { min: 16, max: 32768, step: 16, default: 2048 } });
 const apiModel = computed(() => currentModel.value?.apiModel || defaultModel);
-const gpt5Spec = computed(() => (modelOptions.find((m) => m.id === "gpt-5")?.specific ?? { verbosity: { options: ["low", "medium", "high"], default: "medium" }, reasoning_effort: { options: ["low", "medium", "high"], default: "medium" } }));
+const gpt5Spec = computed(() => (modelOptions.find((m) => m.id === "gpt-5")?.specific ?? { verbosity: { options: ["low", "medium", "high"], default: "medium" }, reasoning_effort: { options: ["low", "medium", "high"], default: "medium" }));
 const gpt5ExtrasEnabled = useLocalStorage<boolean>("chatbot.gpt5Extras", gpt5ExtrasDefault);
 // Inline text settings
 const inlineTextAuto = useLocalStorage<boolean>('chatbot.inlineTextAuto', true)
 const inlineTextThresholdKB = useLocalStorage<number>('chatbot.inlineTextThresholdKB', 80)
 
 // Prefer global apiBase (proxy) when configured; else fallback to model's endpoint
-const effectiveApiBase = computed(() => globalApiBase || currentModel.value?.apiBase || "");
+const effectiveApiBase = computed(() => {
+  if (backendBase) return backendBase.replace(/\/$/, '') + '/api/ai';
+  return globalApiBase || currentModel.value?.apiBase || "";
+});
 // Backward compatibility: auto-upgrade old endpoint '/api/chat' to '/api/ai'
 const effectiveApiBaseNormalized = computed(() => {
   // Always call server proxy at absolute root '/api/ai'
   let url = effectiveApiBase.value || "/api/ai";
   if (url.includes("/api/chat")) url = url.replace("/api/chat", "/api/ai");
+  // If absolute URL (http/https), keep as-is (FastAPI direct)
+  if (/^https?:\/\//i.test(url)) return url;
+  // Else ensure it is an absolute API path under current origin
   if (!url.startsWith("/api/")) url = "/api/ai";
   return url;
 });
@@ -618,17 +752,9 @@ function toggleSettings() {
 function toggleAddMenu() {
   showAddMenu.value = !showAddMenu.value
 }
-function openImagePicker() {
+function openAnyPicker() {
   showAddMenu.value = false
-  imagePickerRef.value?.click()
-}
-function openPdfPicker() {
-  showAddMenu.value = false
-  pdfPickerRef.value?.click()
-}
-function openDocPicker() {
-  showAddMenu.value = false
-  docPickerRef.value?.click()
+  anyPickerRef.value?.click()
 }
 
 // Close add menu when clicking outside or pressing Esc
@@ -655,61 +781,7 @@ async function onDrop(e: DragEvent) {
   if (!dt) return
   const files = dt.files
   if (!files || !files.length) return
-  // Split images and pdf, apply existing handlers (limits also apply)
-  const images: File[] = []
-  const pdfs: File[] = []
-  const texts: File[] = [] // md/txt/docx
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i]
-    if (f.type.startsWith('image/')) images.push(f)
-    else if (f.type === 'application/pdf') pdfs.push(f)
-    else if (f.type === 'text/markdown' || f.name.endsWith('.md') || f.type === 'text/plain' || f.name.endsWith('.txt') || f.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || f.name.endsWith('.docx')) texts.push(f)
-  }
-  if (images.length) {
-    const list = Array.from(images)
-    const maxImages = 6
-    const maxSize = 4 * 1024 * 1024
-    for (const f of list) {
-      if (imageDataUrls.value.length >= maxImages) break
-      if (f.size > maxSize) continue
-      await new Promise<void>((resolve) => {
-        const fr = new FileReader()
-        fr.onload = () => { if (typeof fr.result === 'string') imageDataUrls.value.push(fr.result); resolve() }
-        fr.onerror = () => resolve()
-        fr.readAsDataURL(f)
-      })
-    }
-  }
-  if (pdfs.length) {
-    // Only take first PDF
-    const f = pdfs[0]
-    const max = 20 * 1024 * 1024
-    if (f.size <= max) {
-      const b64 = await fileToBase64(f)
-      try {
-        const res: any = await $fetch('/api/files/upload', { method: 'POST', body: { name: f.name || 'upload.pdf', contentBase64: b64, purpose: 'assistants' }})
-        if (res?.status === 'ok' && res?.file?.id) uploadedFileIds.value.push(res.file.id)
-      } catch {}
-    }
-  }
-  if (texts.length) {
-    // Only take first doc-like file; upload to Files for uniformity
-    const f = texts[0]
-    const isTextLike = f.type === 'text/markdown' || f.name.endsWith('.md') || f.type === 'text/plain' || f.name.endsWith('.txt')
-    if (inlineTextAuto.value && isTextLike && f.size <= (inlineTextThresholdKB.value * 1024)) {
-      try {
-        const text = await f.text()
-        inlineTextSnippets.value.push({ name: f.name, text })
-        pushMessage({ role: 'assistant', content: `已内联导入文本：${f.name}（${text.length} 字符）` })
-      } catch {}
-    } else {
-      const b64 = await fileToBase64(f)
-      try {
-        const res: any = await $fetch('/api/files/upload', { method: 'POST', body: { name: f.name, contentBase64: b64, purpose: 'assistants' }})
-        if (res?.status === 'ok' && res?.file?.id) uploadedFileIds.value.push(res.file.id)
-      } catch {}
-    }
-  }
+  await handlePickedFiles(Array.from(files))
 }
 
 // Convert File to base64 string using FileReader (avoid stack overflow)
@@ -910,7 +982,7 @@ async function simulateAssistant(userText: string) {
     const endpoint = effectiveApiBaseNormalized.value;
     console.debug('[chatbot] endpoint=', endpoint, 'model=', selectedModel.value);
     if (endpoint) {
-      const useResponsesApi = selectedModel.value.startsWith('o3');
+      const useResponsesApi = true;
       const chatMessages = buildChatMessages();
       // Inject prompts context and ps subtype-specific blocks
       try {
@@ -983,7 +1055,8 @@ async function simulateAssistant(userText: string) {
           attachments: uploads.attachments,
           temperature: temperature.value,
           max_output_tokens: maxTokens.value,
-          reasoning: { effort: reasoningEffort.value }
+          reasoning: { effort: reasoningEffort.value },
+          instructions: buildAgentInstructions()
         };
         console.debug('[chatbot] request (responses)', {
           endpoint,
@@ -999,7 +1072,7 @@ async function simulateAssistant(userText: string) {
             // using proxy; server injects Authorization
             "Content-Type": "application/json"
           },
-          body: { ...payload, model: selectedModel.value }
+          body: { ...payload, model: selectedModel.value, use_agents: true, session_id: chatScopedId.value || documentId.value || 'global', file_ids: uploadedFileIds.value, prompt: baseInput, instructions: buildAgentInstructions() }
         });
         try {
           console.debug('[chatbot] response (responses)', {
@@ -1007,55 +1080,27 @@ async function simulateAssistant(userText: string) {
             output_text_len: typeof res?.output_text === 'string' ? res.output_text.length : undefined
           });
         } catch {}
-        const text = sanitizeForDisplay(ensureText(normalizeResponsesOutput(res)));
-        pushMessage({ role: "assistant", content: text });
-      } else {
-        // Chat completions
-        const basePayload: any = {
-          model: apiModel.value,
-          messages: chatMessages,
-          // omit temperature for GPT-5
-          // For GPT-5, backend will normalize if needed, but we prefer sending correct field
-          ...(selectedModel.value === 'gpt-5'
-            ? { max_completion_tokens: maxTokens.value }
-            : { max_tokens: maxTokens.value })
-        };
-        // If GPT-5 and response_format enabled in config, attach JSON Schema
-        let payload = basePayload;
-        if (
-          selectedModel.value === "gpt-5" &&
-          responseFormatDefault?.enabled &&
-          responseFormatDefault?.schema
-        ) {
-          payload = {
-            ...payload,
-            response_format: {
-              type: "json_schema",
-              json_schema: { strict: true, schema: responseFormatDefault.schema }
-            }
-          };
+        const rawText = ensureText(normalizeResponsesOutput(res))
+        const parsed = tryParseStructuredJSON(rawText)
+        if (parsed) {
+          // reasoning
+          if (typeof parsed.reasoning === 'string' && parsed.reasoning.trim()) {
+            pushMessage({ role: 'assistant', content: '推理摘要\n' + parsed.reasoning.trim() })
+          }
+          // steps (optional verbose thinking outline)
+          if (Array.isArray(parsed.steps) && parsed.steps.length) {
+            pushMessage({ role: 'assistant', content: '思考步骤\n- ' + parsed.steps.join('\n- ') })
+          }
+          // reply (assistant-friendly summary for chat)
+          if (typeof parsed.reply === 'string' && parsed.reply.trim()) {
+            pushMessage({ role: 'assistant', content: sanitizeForDisplay(parsed.reply.trim()) })
+          }
+          // result -> open diff apply preview (do not echo to chat)
+          await openStructuredApplyPreview(parsed.targets, String(parsed.result || ''))
+        } else {
+          const text = sanitizeForDisplay(ensureText(rawText));
+          pushMessage({ role: "assistant", content: text });
         }
-        console.debug('[chatbot] request (chat.completions)', {
-          endpoint,
-          selectedModel: selectedModel.value,
-          apiModel: apiModel.value,
-          messages: payload.messages?.length,
-          max_tokens: payload.max_tokens,
-          max_completion_tokens: payload.max_completion_tokens
-        });
-        const res: any = await requestChatCompletions(endpoint, payload);
-        try {
-          console.debug('[chatbot] response (chat.completions)', {
-            model: res?.model || res?.choices?.[0]?.model,
-            content_len: typeof res?.choices?.[0]?.message?.content === 'string' ? res.choices[0].message.content.length : undefined
-          });
-        } catch {}
-        const text = sanitizeForDisplay(ensureText(
-          res?.choices?.[0]?.message?.content ??
-          res?.reply ??
-          (typeof res === "string" ? res : JSON.stringify(res))
-        ));
-        pushMessage({ role: "assistant", content: text });
       }
     } else {
       await new Promise((r) => setTimeout(r, 600));
@@ -1145,13 +1190,32 @@ async function requestChatCompletions(endpoint: string, basePayload: any) {
     : basePayload;
   const hasResponseFormat = !!(basePayload && (basePayload as any).response_format);
   try {
+    // Derive a plain prompt for Agents backend from last user message
+    let derivedPrompt = ''
+    try {
+      const msgs = (payloadWithExtras as any).messages as Array<{ role: string; content: string }>
+      if (Array.isArray(msgs)) {
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const m = msgs[i]
+          if (m && String(m.role).toLowerCase() === 'user') { derivedPrompt = String(m.content || '') ; break }
+        }
+      }
+    } catch {}
     const res: any = await $fetch(endpoint, {
       method: "POST",
       headers: {
         // Proxy route will inject Authorization
         "Content-Type": "application/json"
       },
-      body: { ...payloadWithExtras, model: apiModel.value }
+      body: {
+        ...payloadWithExtras,
+        model: apiModel.value,
+        use_agents: true,
+        session_id: chatScopedId.value || documentId.value || 'global',
+        file_ids: uploadedFileIds.value,
+        instructions: buildAgentInstructions(),
+        prompt: derivedPrompt
+      }
     });
     // If server switched to Responses API, normalize to chat-like shape
     if (res && (res.output || res.object === 'response')) {
@@ -1352,31 +1416,37 @@ async function callAiForWorkspace(prompt: string): Promise<string> {
     throw new Error('AI API端点未配置')
   }
   
-  const useResponsesApi = selectedModel.value.startsWith('o3')
+  const useResponsesApi = true
   
   if (useResponsesApi) {
+    // Build Responses input with attachments so OpenAI receives files
+    const uploads = buildResponsesInputWithUploads(prompt)
     const payload = {
       model: apiModel.value,
-      input: prompt,
+      input: uploads.input || prompt,
+      attachments: uploads.attachments,
       // omit temperature for GPT-5
       max_output_tokens: maxTokens.value,
       reasoning: { effort: reasoningEffort.value }
     }
-    console.debug('[chatbot][workspace] request (responses)', {
-      endpoint,
-      selectedModel: selectedModel.value,
-      apiModel: apiModel.value,
-      inputLen: typeof payload.input === 'string' ? payload.input.length : 0,
-      max_output_tokens: payload.max_output_tokens,
-      reasoning_effort: payload.reasoning?.effort
-    })
+    try {
+      const inLen = typeof payload.input === 'string' ? (payload.input as string).length : 0
+      console.debug('[chatbot][workspace] request (responses)', {
+        endpoint,
+        selectedModel: selectedModel.value,
+        apiModel: apiModel.value,
+        inputLen: inLen,
+        max_output_tokens: payload.max_output_tokens,
+        reasoning_effort: payload.reasoning?.effort
+      })
+    } catch {}
     
     const res = await $fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      body: { ...payload, model: selectedModel.value }
+      body: { ...payload, model: selectedModel.value, use_agents: true, session_id: chatScopedId.value || documentId.value || 'global', file_ids: uploadedFileIds.value, instructions: buildAgentInstructions(), prompt }
     })
     try {
       console.debug('[chatbot][workspace] response (responses)', {
@@ -1386,38 +1456,26 @@ async function callAiForWorkspace(prompt: string): Promise<string> {
     } catch {}
     return sanitizeForDisplay(ensureText(normalizeResponsesOutput(res)))
   } else {
+    // Force Responses path for workspace too
+    const uploads = buildResponsesInputWithUploads(prompt)
     const payload = {
       model: apiModel.value,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: prompt }
-      ],
-      // omit temperature for GPT-5
-      ...(selectedModel.value === 'gpt-5'
-        ? { max_completion_tokens: maxTokens.value }
-        : { max_tokens: maxTokens.value })
+      input: uploads.input,
+      attachments: uploads.attachments,
+      max_output_tokens: maxTokens.value,
+      reasoning: { effort: reasoningEffort.value }
     }
-    console.debug('[chatbot][workspace] request (chat.completions)', {
+    console.debug('[chatbot][workspace] request (responses.fallback)', {
       endpoint,
       selectedModel: selectedModel.value,
-      apiModel: apiModel.value,
-      messages: payload.messages?.length,
-      max_tokens: (payload as any).max_tokens,
-      max_completion_tokens: (payload as any).max_completion_tokens
+      apiModel: apiModel.value
     })
-    
-    const res: any = await requestChatCompletions(endpoint, payload)
-    try {
-      console.debug('[chatbot][workspace] response (chat.completions)', {
-        model: res?.model || res?.choices?.[0]?.model,
-        content_len: typeof res?.choices?.[0]?.message?.content === 'string' ? res.choices[0].message.content.length : undefined
-      })
-    } catch {}
-    return sanitizeForDisplay(ensureText(
-      res?.choices?.[0]?.message?.content ??
-      res?.reply ??
-      (typeof res === "string" ? res : JSON.stringify(res))
-    ))
+    const res: any = await $fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: { ...payload, model: selectedModel.value, use_agents: true, session_id: chatScopedId.value || documentId.value || 'global', file_ids: uploadedFileIds.value, instructions: buildAgentInstructions(), prompt }
+    })
+    return sanitizeForDisplay(ensureText(normalizeResponsesOutput(res)))
   }
 }
 
@@ -1698,7 +1756,10 @@ ${documentContent.substring(0, 500)}${documentContent.length > 500 ? '...' : ''}
 
 只返回JSON，不要任何其他文字。`
 
-    const response = await fetch('/api/siliconflow', {
+    const runtime = useRuntimeConfig()
+    const backendBaseSf = (runtime.public as any)?.backendBase || ''
+    const sfUrl = backendBaseSf ? backendBaseSf.replace(/\/$/, '') + '/api/siliconflow' : '/api/siliconflow'
+    const response = await fetch(sfUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -1966,9 +2027,9 @@ async function executeStructuredSmartEdit(scopeAnalysis: any, userInput: string,
       let sectionPrompt = `${userInput}\n\n目标内容类型: ${section.type}\n内容:\n${section.content}`
       
       if (section.type === 'internship') {
-        sectionPrompt += '\n\n注意：这是实习经验条目，请保持原有的markdown格式（以"- "开头）'
+        sectionPrompt += '\n\n注意：这是实习经验条目，请保持原有的markdown或短代码格式（以"- "开头）'
       } else if (section.type === 'heading') {
-        sectionPrompt += `\n\n注意：这是${section.level}级标题，请保持markdown标题格式`
+        sectionPrompt += `\n\n注意：这是${section.level}级标题，请保持markdown或短代码标题格式`
       }
       
       const result = await callAiForWorkspace(sectionPrompt)
@@ -2025,7 +2086,7 @@ async function executeFullDocumentEdit(scopeAnalysis: any, userInput: string, do
     
     let editPrompt = userInput
     if (scopeAnalysis.action === '翻译') {
-      editPrompt += `\n\n请翻译以下全部内容，保持原有的markdown格式：\n\n${documentContent}`
+      editPrompt += `\n\n请翻译以下全部内容，保持原有的markdown或短代码格式：\n\n${documentContent}`
     } else {
       editPrompt += `\n\n文档内容:\n${documentContent}`
     }
@@ -2118,7 +2179,7 @@ async function executeOriginalChatLogic(userText: string) {
     const endpoint = effectiveApiBaseNormalized.value;
     console.debug('[chatbot] endpoint=', endpoint, 'model=', selectedModel.value);
     if (endpoint) {
-      const useResponsesApi = selectedModel.value.startsWith('o3');
+      const useResponsesApi = true;
       // Build messages and prepend document context as a system message (chat mode only)
       const chatMessages = buildChatMessages();
       try {
@@ -2134,9 +2195,12 @@ async function executeOriginalChatLogic(userText: string) {
       } catch {}
       if (useResponsesApi) {
         // Responses API expects `input` and `max_output_tokens`
+        const baseInput = buildInputFromMessages(chatMessages)
+        const uploads = buildResponsesInputWithUploads(baseInput)
         const payload: any = {
           model: apiModel.value,
-          input: buildInputFromMessages(chatMessages),
+          input: uploads.input || baseInput,
+          attachments: uploads.attachments,
           // omit temperature for GPT-5
           max_output_tokens: maxTokens.value,
           reasoning: { effort: reasoningEffort.value }
@@ -2155,7 +2219,7 @@ async function executeOriginalChatLogic(userText: string) {
             // using proxy; server injects Authorization
             "Content-Type": "application/json"
           },
-          body: { ...payload, model: selectedModel.value }
+          body: { ...payload, model: selectedModel.value, use_agents: true, session_id: chatScopedId.value || documentId.value || 'global', file_ids: uploadedFileIds.value }
         });
         try {
           console.debug('[chatbot] response (responses)', {
@@ -2261,15 +2325,22 @@ function buildInputFromMessages(msgs: Array<{ role: string; content: string }>) 
 
 // Build Responses API input parts for images/PDF per OpenAI docs
 function buildResponsesInputWithUploads(baseText: string) {
-  const content: any[] = []
-  if (baseText && baseText.trim()) content.push({ type: 'input_text', text: baseText })
-  // Inline text snippets (from md/txt small files)
+  // Build 'system' role with current agent instructions
+  const systemContent: any[] = []
+  const sysText = buildAgentInstructions()
+  if (sysText && sysText.trim()) systemContent.push({ type: 'input_text', text: sysText })
+
+  // Build 'user' role content: text + inline snippets + images + input_file ids
+  const userContent: any[] = []
+  const baseTextNorm = (typeof baseText === 'string' ? baseText : '').trim()
+  const ensuredText = baseTextNorm || '请基于上述指令与所附文件完成任务，并输出严格结构化结果。'
+  userContent.push({ type: 'input_text', text: ensuredText })
   try {
     if (Array.isArray(inlineTextSnippets?.value)) {
       for (const snip of inlineTextSnippets.value) {
         if (snip?.text && snip.text.trim()) {
           const header = snip.name ? `[[${snip.name}]]\n` : ''
-          content.push({ type: 'input_text', text: `${header}${snip.text}` })
+          userContent.push({ type: 'input_text', text: `${header}${snip.text}` })
         }
       }
     }
@@ -2279,15 +2350,26 @@ function buildResponsesInputWithUploads(baseText: string) {
       for (const url of imageDataUrls.value) {
         if (typeof url === 'string' && url.startsWith('data:')) {
           const m = url.match(/^data:([^;]+);base64,(.*)$/)
-          if (m) content.push({ type: 'input_image', image_data: { data: m[2], mime_type: m[1] } })
+          if (m) userContent.push({ type: 'input_image', image_data: { data: m[2], mime_type: m[1] } })
         }
       }
     }
   } catch {}
-  const input = [{ role: 'user', content }]
-  const attachments = Array.isArray(uploadedFileIds?.value) && uploadedFileIds.value.length
-    ? uploadedFileIds.value.map((id) => ({ file_id: id, tools: [{ type: 'file_search' }] }))
-    : undefined
+  // Add input_file for each uploaded file id (per Responses API doc)
+  try {
+    if (Array.isArray(uploadedFileIds?.value) && uploadedFileIds.value.length) {
+      for (const fid of uploadedFileIds.value) {
+        if (fid && typeof fid === 'string') userContent.push({ type: 'input_file', file_id: fid })
+      }
+    }
+  } catch {}
+
+  const input: any[] = []
+  if (systemContent.length) input.push({ role: 'system', content: systemContent })
+  input.push({ role: 'user', content: userContent })
+
+  // Do not mix file_search attachments when using direct input_file mode
+  const attachments = undefined
   return { input, attachments }
 }
 
@@ -2437,7 +2519,10 @@ async function processFixInChatMessage(userText: string) {
       selectedTextLength: fixOriginalText.value.length
     });
     
-    const response = await $fetch('/api/content-generate', {
+    const runtime = useRuntimeConfig()
+    const backendBaseCg = (runtime.public as any)?.backendBase || ''
+    const cgUrl = backendBaseCg ? backendBaseCg.replace(/\/$/, '') + '/api/content-generate' : '/api/content-generate'
+    const response = await $fetch(cgUrl, {
       method: 'POST',
       headers: { 'x-chatbot-mode': currentMode.value },
       body: {
@@ -2857,6 +2942,7 @@ async function resetPromptsToDefault() {
 // Uploads state (images dataURL, pdf file id)
 const imageDataUrls = ref<string[]>([])
 const uploadedFileIds = ref<string[]>([])
+const uploadedFiles = ref<Array<{ id: string; name?: string }>>([])
 const inlineTextSnippets = ref<Array<{ name: string; text: string }>>([])
 
 function onPickImages(e: Event) {
@@ -2890,50 +2976,79 @@ function onPickImages(e: Event) {
   try { if (input) (input as any).value = '' } catch {}
 }
 
-async function onPickPdf(e: Event) {
+async function onPickAnyFile(e: Event) {
   const input = e.target as HTMLInputElement
-  const file = input?.files?.[0]
-  if (!file) return
-  if (file.size > 20 * 1024 * 1024) return // 20MB cap
-  const b64 = await fileToBase64(file)
-  try {
-    const res: any = await $fetch('/api/files/upload', { method: 'POST', body: { name: file.name || 'upload.pdf', contentBase64: b64, purpose: 'assistants' }})
-    if (res?.status === 'ok' && res?.file?.id) {
-      uploadedFileIds.value.push(res.file.id)
-      try { pushMessage({ role: 'assistant', content: `已上传：${file.name}` }) } catch {}
-    } else {
-      try { pushMessage({ role: 'assistant', content: `上传失败：${res?.error || '服务器未响应'}` }) } catch {}
-    }
-  } catch (err: any) {
-    try { pushMessage({ role: 'assistant', content: `上传失败：${err?.message || '网络错误'}` }) } catch {}
-  }
+  const list = input?.files ? Array.from(input.files) : []
+  if (!list.length) return
+  await handlePickedFiles(list)
+  try { if (input) (input as any).value = '' } catch {}
 }
 
-async function onPickDoc(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input?.files?.[0]
-  if (!file) return
-  // Short-text inline: if md/txt and < 80KB，则读文本，直接加入 inlineTextSnippets；否则上传 Files
-  const isTextLike = file.type === 'text/markdown' || file.name.endsWith('.md') || file.type === 'text/plain' || file.name.endsWith('.txt')
-  if (inlineTextAuto.value && isTextLike && file.size <= (inlineTextThresholdKB.value * 1024)) {
-    try {
-      const text = await file.text()
-      inlineTextSnippets.value.push({ name: file.name, text })
-      pushMessage({ role: 'assistant', content: `已内联导入文本：${file.name}（${text.length} 字符）` })
-      return
-    } catch {}
-  }
-  const b64 = await fileToBase64(file)
-  try {
-    const res: any = await $fetch('/api/files/upload', { method: 'POST', body: { name: file.name, contentBase64: b64, purpose: 'assistants' }})
-    if (res?.status === 'ok' && res?.file?.id) {
-      uploadedFileIds.value.push(res.file.id)
-      try { pushMessage({ role: 'assistant', content: `已上传：${file.name}` }) } catch {}
-    } else {
-      try { pushMessage({ role: 'assistant', content: `上传失败：${res?.error || '服务器未响应'}` }) } catch {}
+async function handlePickedFiles(files: File[]) {
+  const images: File[] = []
+  const pdfs: File[] = []
+  const docs: File[] = [] // md/txt/doc/docx
+  for (const f of files) {
+    if (f.type.startsWith('image/')) images.push(f)
+    else if (f.type === 'application/pdf') pdfs.push(f)
+    else if (
+      f.type === 'text/markdown' || f.name.endsWith('.md') ||
+      f.type === 'text/plain' || f.name.endsWith('.txt') ||
+      f.type === 'application/msword' || f.name.endsWith('.doc') ||
+      f.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || f.name.endsWith('.docx')
+    ) {
+      docs.push(f)
     }
-  } catch (err: any) {
-    try { pushMessage({ role: 'assistant', content: `上传失败：${err?.message || '网络错误'}` }) } catch {}
+  }
+
+  // images -> preview as dataURL (no upload)
+  if (images.length) {
+    const maxImages = 6
+    const maxSize = 4 * 1024 * 1024
+    for (const f of images) {
+      if (imageDataUrls.value.length >= maxImages) break
+      if (f.size > maxSize) continue
+      await new Promise<void>((resolve) => {
+        const fr = new FileReader()
+        fr.onload = () => { if (typeof fr.result === 'string') imageDataUrls.value.push(fr.result); resolve() }
+        fr.onerror = () => resolve()
+        fr.readAsDataURL(f)
+      })
+    }
+  }
+
+  // PDFs -> upload first one
+  if (pdfs.length) {
+    const f = pdfs[0]
+    if (f.size <= 20 * 1024 * 1024) {
+      const b64 = await fileToBase64(f)
+      try {
+        const runtime = useRuntimeConfig()
+        const backendBase = (runtime.public as any)?.backendBase || ''
+        const filesUrl = backendBase ? backendBase.replace(/\/$/, '') + '/api/files/upload' : '/api/files/upload'
+        const res: any = await $fetch(filesUrl, { method: 'POST', body: { name: f.name || 'upload.pdf', contentBase64: b64, purpose: 'user_data' }})
+        if (res?.status === 'ok' && res?.file?.id) {
+          uploadedFileIds.value.push(res.file.id)
+          uploadedFiles.value.push({ id: res.file.id, name: f.name })
+        }
+      } catch {}
+    }
+  }
+
+  // docs -> always upload (no inline injection; Agents will read files)
+  if (docs.length) {
+    const f = docs[0]
+    const b64 = await fileToBase64(f)
+    try {
+      const runtime = useRuntimeConfig()
+      const backendBase = (runtime.public as any)?.backendBase || ''
+      const filesUrl = backendBase ? backendBase.replace(/\/$/, '') + '/api/files/upload' : '/api/files/upload'
+      const res: any = await $fetch(filesUrl, { method: 'POST', body: { name: f.name, contentBase64: b64, purpose: 'user_data' }})
+      if (res?.status === 'ok' && res?.file?.id) {
+        uploadedFileIds.value.push(res.file.id)
+        uploadedFiles.value.push({ id: res.file.id, name: f.name })
+      }
+    } catch {}
   }
 }
 
@@ -2944,6 +3059,15 @@ function removeImage(idx: number) {
 function removeFileId(idx: number) {
   if (idx >= 0 && idx < uploadedFileIds.value.length) uploadedFileIds.value.splice(idx, 1)
 }
+
+function removeUploadedFile(idx: number) {
+  if (idx >= 0 && idx < uploadedFiles.value.length) uploadedFiles.value.splice(idx, 1)
+  if (idx >= 0 && idx < uploadedFileIds.value.length) uploadedFileIds.value.splice(idx, 1)
+}
+
+const hasAnyAttachments = computed(() => {
+  return (imageDataUrls.value.length + uploadedFiles.value.length + inlineTextSnippets.value.length) > 0
+})
 
 // Paste image support
 onMounted(() => {
@@ -3000,5 +3124,6 @@ onUnmounted(() => {
   @apply bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600;
 }
 </style>
+
 
 
