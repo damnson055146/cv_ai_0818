@@ -1051,7 +1051,7 @@ async function simulateAssistant(userText: string) {
         const uploads = buildResponsesInputWithUploads(baseInput)
         const payload: any = {
           model: apiModel.value,
-          input: uploads.input || baseInput,
+          input: uploads.input,
           attachments: uploads.attachments,
           temperature: temperature.value,
           max_output_tokens: maxTokens.value,
@@ -1423,7 +1423,7 @@ async function callAiForWorkspace(prompt: string): Promise<string> {
     const uploads = buildResponsesInputWithUploads(prompt)
     const payload = {
       model: apiModel.value,
-      input: uploads.input || prompt,
+      input: uploads.input,
       attachments: uploads.attachments,
       // omit temperature for GPT-5
       max_output_tokens: maxTokens.value,
@@ -2199,7 +2199,7 @@ async function executeOriginalChatLogic(userText: string) {
         const uploads = buildResponsesInputWithUploads(baseInput)
         const payload: any = {
           model: apiModel.value,
-          input: uploads.input || baseInput,
+          input: uploads.input,
           attachments: uploads.attachments,
           // omit temperature for GPT-5
           max_output_tokens: maxTokens.value,
@@ -2324,7 +2324,7 @@ function buildInputFromMessages(msgs: Array<{ role: string; content: string }>) 
 }
 
 // Build Responses API input parts for images/PDF per OpenAI docs
-function buildResponsesInputWithUploads(baseText: string) {
+function buildResponsesInputWithUploads(baseText: string): { input: any; attachments?: any } {
   // Build 'system' role with current agent instructions
   const systemContent: any[] = []
   const sysText = buildAgentInstructions()
@@ -2364,13 +2364,13 @@ function buildResponsesInputWithUploads(baseText: string) {
     }
   } catch {}
 
-  const input: any[] = []
-  if (systemContent.length) input.push({ role: 'system', content: systemContent })
-  input.push({ role: 'user', content: userContent })
+  const inputParts: any[] = []
+  if (systemContent.length) inputParts.push({ role: 'system', content: systemContent })
+  inputParts.push({ role: 'user', content: userContent })
 
   // Do not mix file_search attachments when using direct input_file mode
   const attachments = undefined
-  return { input, attachments }
+  return { input: inputParts as any, attachments }
 }
 
 // Drag logic for bubble
