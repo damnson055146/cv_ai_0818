@@ -3026,7 +3026,7 @@ async function handlePickedFiles(files: File[]) {
         const runtime = useRuntimeConfig()
         const backendBase = (runtime.public as any)?.backendBase || ''
         const filesUrl = backendBase ? backendBase.replace(/\/$/, '') + '/api/files/upload' : '/api/files/upload'
-        const res: any = await $fetch(filesUrl, { method: 'POST', body: { name: f.name || 'upload.pdf', contentBase64: b64, purpose: 'user_data' }})
+        const res: any = await $fetch(filesUrl, { method: 'POST', body: { name: f.name || 'upload.pdf', contentBase64: b64, purpose: 'assistants' }})
         if (res?.status === 'ok' && res?.file?.id) {
           uploadedFileIds.value.push(res.file.id)
           uploadedFiles.value.push({ id: res.file.id, name: f.name })
@@ -3043,7 +3043,7 @@ async function handlePickedFiles(files: File[]) {
       const runtime = useRuntimeConfig()
       const backendBase = (runtime.public as any)?.backendBase || ''
       const filesUrl = backendBase ? backendBase.replace(/\/$/, '') + '/api/files/upload' : '/api/files/upload'
-      const res: any = await $fetch(filesUrl, { method: 'POST', body: { name: f.name, contentBase64: b64, purpose: 'user_data' }})
+      const res: any = await $fetch(filesUrl, { method: 'POST', body: { name: f.name, contentBase64: b64, purpose: 'assistants' }})
       if (res?.status === 'ok' && res?.file?.id) {
         uploadedFileIds.value.push(res.file.id)
         uploadedFiles.value.push({ id: res.file.id, name: f.name })

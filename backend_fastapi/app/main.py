@@ -33,11 +33,62 @@ app.add_middleware(
 # === Responses API helpers ===
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
+
 def get_openai_key() -> str:
     key = os.getenv("OPENAI_API_KEY", "").strip()
     if not key:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is missing")
     return key
+
+
+def _normalize_content_item(item):
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        normalized: dict = {}
+        raw_type = item.get("type")
+        if isinstance(raw_type, str):
+            type_clean = raw_type.strip()
+            if type_clean:
+                normalized["type"] = "input_text" if type_clean.lower() == "text" else type_clean
+        for key, value in item.items():
+            if key == "type" or value is None:
+                continue
+            if key == "text":
+                normalized[key] = str(value)
+            else:
+                normalized[key] = value
+        if "type" not in normalized:
+            if "text" in normalized or "text" in item:
+                normalized = {
+                    "type": "input_text",
+                    "text": str(normalized.get("text", item.get("text", ""))),
+                }
+            else:
+                text_val = str(item)
+                return {"type": "input_text", "text": text_val} if text_val else None
+        if normalized.get("type") == "input_text":
+            normalized["text"] = str(normalized.get("text", ""))
+        return normalized
+    if isinstance(item, str):
+        return {"type": "input_text", "text": item}
+    text_val = str(item)
+    return {"type": "input_text", "text": text_val} if text_val else None
+
+
+def _normalize_content(raw):
+    normalized_list: list[dict] = []
+    if isinstance(raw, list):
+        raw_items = raw
+    elif raw is None:
+        raw_items = []
+    else:
+        raw_items = [raw]
+    for item in raw_items:
+        normalized_item = _normalize_content_item(item)
+        if normalized_item:
+            normalized_list.append(normalized_item)
+    return normalized_list
 
 
 def build_responses_input(
@@ -46,23 +97,43 @@ def build_responses_input(
     user_text: str | None = None,
     file_ids: list[str] | None = None,
 ):
+
     input_msgs: list[dict] = []
     if isinstance(messages, list) and messages:
         for m in messages:
+            if not isinstance(m, dict):
+                continue
             role = str(m.get("role") or "user")
-            txt = str(m.get("content") or "")
-            content = ([{"type": "text", "text": txt}] if txt else [])
+            content = _normalize_content(m.get("content"))
+            if not content:
+                txt = m.get("text")
+                if isinstance(txt, str):
+                    content = [{"type": "input_text", "text": txt}]
             input_msgs.append({"role": role, "content": content})
-    else:
+    if not input_msgs:
         input_msgs = [
-            {"role": "system", "content": [{"type": "text", "text": (system_text or "You are a helpful assistant.")}]} ,
-            {"role": "user", "content": [{"type": "text", "text": (user_text or "")}]} ,
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": system_text or "You are a helpful assistant.",
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": user_text or "",
+                    }
+                ],
+            },
         ]
+
     if file_ids:
-        for m in reversed(input_msgs):
-            if m.get("role") == "user":
-                m["content"].extend({"type": "input_file", "file_id": fid} for fid in file_ids)
-                break
+        _ensure_file_ids_on_user_message(input_msgs, file_ids)
     return input_msgs
 
 
@@ -74,6 +145,50 @@ async def post_responses(api_key: str, payload: dict, timeout: float = 120.0):
             json=payload,
         )
     return r
+
+
+def _ensure_file_ids_on_user_message(input_msgs, file_ids):
+    if not isinstance(input_msgs, list) or not file_ids:
+        return input_msgs
+
+    user_msg = None
+    for m in reversed(input_msgs):
+        if isinstance(m, dict) and str(m.get("role") or "").lower() == "user":
+            user_msg = m
+            break
+    if user_msg is None:
+        user_msg = {"role": "user", "content": []}
+        input_msgs.append(user_msg)
+
+    content_list = user_msg.get("content")
+    if not isinstance(content_list, list):
+        content_list = _normalize_content(content_list)
+        user_msg["content"] = content_list
+    if content_list is None:
+        content_list = []
+        user_msg["content"] = content_list
+
+    existing_ids: set[str] = set()
+    for item in list(content_list):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "").lower() != "input_file":
+            continue
+        fid = item.get("file_id")
+        if isinstance(fid, str) and fid:
+            existing_ids.add(fid)
+
+    for raw_fid in file_ids:
+        if raw_fid is None:
+            continue
+        fid = raw_fid.decode() if isinstance(raw_fid, bytes) else str(raw_fid)
+        fid = fid.strip()
+        if not fid or fid in existing_ids:
+            continue
+        content_list.append({"type": "input_file", "file_id": fid})
+        existing_ids.add(fid)
+
+    return input_msgs
 
 
 def build_responses_payload(body: dict) -> dict:
@@ -94,6 +209,8 @@ def build_responses_payload(body: dict) -> dict:
     input_payload = body.get("input") if isinstance(body.get("input"), list) else None
     if not input_payload:
         input_payload = build_responses_input(messages, system_text, user_text, file_ids)
+    else:
+        _ensure_file_ids_on_user_message(input_payload, file_ids)
 
     response_format = body.get("response_format")
     max_out = body.get("max_output_tokens")
@@ -107,6 +224,8 @@ def build_responses_payload(body: dict) -> dict:
         reasoning = {"effort": alias.get(eff, eff if eff in {"low", "medium", "high"} else "medium")}
 
     out = {"model": model, "input": input_payload}
+    if isinstance(body.get("attachments"), list):
+        out["attachments"] = body["attachments"]
     if response_format and isinstance(response_format, dict):
         fmt_type = response_format.get("type")
         if fmt_type:
@@ -279,7 +398,16 @@ async def files_upload(req: Request):
     body = await req.json()
     name = str(body.get("name") or "upload.bin")
     b64 = str(body.get("contentBase64") or "")
-    purpose = str(body.get("purpose") or "user_data")
+    purpose_raw = body.get("purpose")
+    purpose = str(purpose_raw or "").strip().lower() or "assistants"
+    # Responses/Assistants APIs require files uploaded with specific purposes.
+    # Accept a small allowlist and coerce legacy aliases (e.g. "user_data")
+    allowed_purposes = {"assistants", "responses", "vision"}
+    legacy_aliases = {"user_data": "assistants"}
+    if purpose in legacy_aliases:
+        purpose = legacy_aliases[purpose]
+    elif purpose not in allowed_purposes:
+        purpose = "assistants"
     if not b64:
         raise HTTPException(status_code=400, detail="contentBase64 is required")
 
