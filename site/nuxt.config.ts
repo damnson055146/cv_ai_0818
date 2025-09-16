@@ -113,6 +113,10 @@ export default defineNuxtConfig({
       ps: {
         requireUpload: true,
         allowedUploadTypes: ["application/pdf"]
+      },
+      rec: {
+        requireUpload: true,
+        allowedUploadTypes: ["application/pdf"]
       }
     }
   },

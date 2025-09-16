@@ -218,7 +218,7 @@
 
       <!-- Messages -->
       <div ref="scrollRef" class="flex-1 px-4 py-4 space-y-3 overflow-y-auto bg-c">
-        <div v-for="m in messages" :key="m.id" class="w-full">
+        <div v-for="m in messages" :key="m.id" class="w-full" @click="onMessageClick(m)">
           <div
             v-if="m.role === 'assistant'"
             class="w-full">
@@ -411,7 +411,7 @@ interface Message {
 
 // Preset system prompt
 const SYSTEM_PROMPT =
-  "你是一个资深留学顾问，擅长编辑留学申请用的简历、个人陈述/文书、推荐信，并能专业解答留学相关问题。默认用简体中文回答，如果文本处理需求则按照用户要求来选择语言。你的回答风格专业、清晰、可执行，必要时先澄清关键信息。";
+  "你是一个资深留学顾问，擅长编辑留学申请用的简历、个人陈述/文书、推荐信。默认用简体中文回答，如果文本处理需求则按照用户要求来选择语言。你的回答风格专业、清晰、可执行，必要时先澄清关键信息。";
 
 const isOpen = ref(false);
 const draft = ref("");
@@ -461,12 +461,12 @@ function buildAgentInstructions(): string {
   }
   if (meta.docType === 'rec') {
     return [
-      '# 推荐信撰写专家提示词\n\n## 角色定义\n\n你是一位经验丰富的**推荐人**，经常为你接触过的学生撰写研究生申请推荐信。你严格遵循推荐人视角：**仅基于亲眼所见、亲身互动或直接公开展示**的学生表现进行评价，绝不涉及无法观察到的内部细节或私密信息。\n\n## 核心任务\n\n基于输入信息，按工作流程完成：素材整理 → 大纲构思 → 英文推荐信撰写\n\n## 推荐信写作风格\n\n### 1. 语言自然度提升\n\n* **词汇多样化**：使用同义词和近义词替代重复表达，避免模板化痕迹\n* **表达层次丰富**：在保持专业性的前提下，适当使用日常词汇，让语言更自然\n* **微妙变化感**：体现真人写作的自然不完美，避免过于工整的机器感\n* **教学观察口吻**：全稿自然融入1–2处"教师记忆锚点"句式，以增强人情味与可信度（如 "I still remember how she brought her drafts week after week …"、"What impressed me most was not only the result but also her steady improvement."），但避免滥用模板化表达\n\n### 2. 句式结构优化\n\n* **长短句交替**：灵活运用简单句、复合句和并列句，创造节奏感\n* **多样化开头**：避免段落和句子的重复开头模式\n* **自然连接**：在转折和补充处使用恰当的衔接词（however, moreover, particularly等）\n* **从句优先**：使用定语从句、状语从句等替代破折号展开，保持流畅度\n* **避免评分报告腔**：用"观察—印象—判断"的口吻，而非"打分—条目—评语"的口吻\n\n### 3. 语调把控\n\n* **正式中带亲和**：整体保持学术推荐信的严肃性，偶尔加入温和的感叹或强调\n* **避免重复套路**：每段的结构和表达方式应有所不同\n* **真实感增强**：体现推荐人的个人观察和真实感受；必要时用"我观察到/我记得/在我的课堂上"等自然主语提示\n\n### 4. 严格禁止事项\n\n* ❌ 在长句中使用破折号进行展开\n* ❌ 直接引用学生的原话或对话\n* ❌ 描述推荐人无法观察到的技术细节、内部讨论或心理活动\n* ❌ 编造任何数据、成绩、排名或未提及的成果\n* ❌ **术语堆砌**：避免像作业总结那样罗列细碎技术名词（如"几何变换、触发器、多视角系统"等）而不做能力层面的转译\n\n## 工作流程\n\n### 第一步：精准素材提炼\n\n**目标**：筛选2-3个符合推荐人观察视角的核心故事\n\n**筛选标准**：\n\n* ✅ **直接观察场景**（必须符合以下至少一种）：\n\n  * 课堂互动：提问、讨论、演示、小组合作表现\n  * 实验指导：实验操作、数据分析讨论、结果汇报\n  * 办公室/课后交流：答疑、学术讨论、项目进展汇报\n  * 公开展示：答辩、演讲、作品展示、同伴协助\n  * 书面材料：作业、报告、论文草稿的质量体现\n  * 日常观察：学习态度、同伴关系、责任心表现\n\n* ✅ **能力体现重点**：\n\n  * 学术能力：分析思维、创新见解、学习能力\n  * 解决问题：面对挑战的应对方式和效果\n  * 个人品质：责任心、协作精神、自我驱动力\n  * 成长轨迹：从初期到后期的明显进步\n\n* ✅ **概括技术细节（能力化转译）**：\n\n  * 技术描述应符合"推荐人几个月后仍能回忆"的 granularity。每个故事最多保留 1–2 个肉眼可见或演示时明显的要点；**将技术名词转译为能力与效果**（如"组织复杂场景、保证演示连贯性、关注体验的一致性"），避免底层算法/参数细节。\n  * 主要记录学生的行动、迭代过程、与师生互动以及可量化或可现场感知的结果；若必须提及技术名词，用上位概念或效果性措辞总结（如"system-level thinking""user experience awareness"）\n\n**合理补充原则**：\n\n* 可基于提供信息进行符合逻辑的细节扩展\n* 补充内容必须是推荐人可能观察到的场景\n* 示例：学习积极 → 经常在课后讨论问题 → 某次就XX理论进行深入探讨的具体场景\n\n**输出格式**（STAR）：\n\n* **Situation**：具体的观察场景和背景\n* **Task**：学生面临的任务或挑战\n* **Action**：推荐人直接观察到的学生行为和表现\n* **Result**：可观察到的结果与所体现的能力/品质（**用能力化语言收束**）\n\n### 第二步：结构化大纲生成\n\n**写作原则**：\n\n* **Show, don't tell**：通过具体叙述展现能力，而非抽象概括\n* **故事驱动**：每个故事指向一个明确的学生优势\n* **推荐人视角**：始终以观察者身份进行评价和称赞\n* **逻辑递进**：从具体表现到能力总结，层次清晰\n* **观察句嵌入**：在开头或主体中自然嵌入1–2处教学观察句式，避免模板化重复\n\n**大纲结构**：\n\n1. **开头段**：推荐人身份、与学生关系、课程/项目背景、总体印象\n2. **主体段落**（2–3段）：每段对应一个核心故事\n\n   * 场景描述（简洁）\n   * 表现叙述（详细，少术语、重行动与迭代）\n   * 能力体现（明确，系统化思维/沟通协调/稳定改进等）\n   * 推荐人评价（真诚，避免评分类口吻）\n3. **结尾段**：综合评价与**更具人情味的强推荐**（如 *"I am confident that she will excel in graduate studies, and I would be glad to see her join your program."*），并保留可联系意愿\n\n### 第三步：推荐信撰写\n\n**写作要求**：\n\n* 语言：英文，符合学术推荐信规范，避免评分报告腔\n* 数据一致：所有人名(中文名用拼音)、课程、成绩等信息与输入完全一致\n* **技术细节转译**：若出现具体技术名词，统一转写为能力与效果层面的描述\n* **观察句与结尾**：全稿包含1–2处教学观察句式；结尾加入温度更高的个人态度句（如 *"I would be glad to see her join your program."*）\n* 风格参考：严格按照提供的"推荐信示例"风格\n* 格式：纯文本输出，无Markdown格式\n\n## 质量检查清单\n\n撰写完成后，逐项检查：\n\n### 视角一致性检查\n\n* [ ] 所有描述内容均为推荐人可直接观察\n* [ ] 未出现学生内心想法或私人对话\n* [ ] 未涉及不可观察的技术实现细节或团队内部讨论\n\n### 语言质量检查\n\n* [ ] 未使用破折号进行长句展开\n* [ ] 未直接引用学生原话\n* [ ] 句式长短搭配合理，表达自然流畅\n* [ ] 至少包含1–2处自然的教学观察句式，且不显模板化\n* [ ] 全文避免"评分报告"口吻\n\n### 内容完整性检查\n\n* [ ] 每段经历后都有清晰的能力与品质评价（能力化转译到位）\n* [ ] 未出现术语堆砌与作业式罗列\n* [ ] 信息准确，未编造任何数据或成果\n\n### 结构逻辑检查\n\n* [ ] 开头、主体、结尾结构完整\n* [ ] 段落间过渡自然，逻辑清晰\n* [ ] 结尾含更具人情味的强推荐句（如 *"I would be glad to see her join your program."*）\n\n## 输出要求\n\n**格式**：纯文本，结构如下\n\n【素材提炼】\n故事1：\\[STAR格式]\n故事2：\\[STAR格式]\n故事3：\\[STAR格式]\n\n【写作大纲】\n\\[结构化大纲内容]\n\n【推荐信全文】长度：约320词\n\\[完整的英文推荐信]\n\\[中文翻译]\n\n【质量检查确认】\n\\[确认通过的检查项目清单]\n\n\n## 输入信息\n{{学生信息、推荐人信息、相关经历等}}\n\n## 推荐信示例\n{{推荐信参考示例}}',
+      'You are assisting with recommendation letter drafting in chat mode. Keep replies concise and avoid long templates; defer full drafting to dedicated creation flow.',
       commonFooter
     ].join(' ')
   }
   // ps: elements/outline vs body
-  if (meta.docType === 'ps' && meta.sub === 'outline') {
+  if (docMeta.value.docType === 'ps' && docMeta.value.sub === 'outline') {
     return [
       'You are preparing Personal Statement materials and outline. Extract key elements, organize into a clear outline.',
       'Check for missing required info; if missing, reflect in steps and produce result that marks placeholders.',
@@ -499,7 +499,47 @@ function tryParseStructuredJSON(text: string): any | null {
   return null
 }
 
-async function openStructuredApplyPreview(targets: any[] | undefined, resultText: string) {
+// Normalize a structured object from Responses API JSON part
+function normalizeStructuredFromObj(obj: any): any | null {
+  if (!obj || typeof obj !== 'object') return null
+  try {
+    const out: any = {}
+    out.steps = Array.isArray(obj.steps) ? obj.steps : []
+    out.targets = Array.isArray(obj.targets) ? obj.targets : []
+    out.result = typeof obj.result === 'string' ? obj.result : ''
+    out.reasoning = typeof obj.reasoning === 'string' ? obj.reasoning : (typeof obj.reasoning_summary === 'string' ? obj.reasoning_summary : '')
+    out.reply = typeof obj.reply === 'string' ? obj.reply : ''
+    if (out.result || out.reasoning || out.reply || out.steps.length || out.targets.length) return out
+  } catch {}
+  return null
+}
+
+// Extract structured outputs from Responses payload (handles json parts)
+function extractStructuredFromResponsesPayload(res: any): any | null {
+  try {
+    const outputs = res?.output
+    if (Array.isArray(outputs)) {
+      for (const item of outputs) {
+        const contentArr = item?.content
+        if (Array.isArray(contentArr)) {
+          for (const c of contentArr) {
+            if (c && typeof c.json === 'object' && c.json) {
+              const norm = normalizeStructuredFromObj(c.json)
+              if (norm) return norm
+            }
+            if (typeof c?.text === 'string') {
+              const parsed = tryParseStructuredJSON(c.text)
+              if (parsed) return parsed
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+  return null
+}
+
+async function openStructuredApplyPreview(targets: any[] | undefined, resultText: string, autoOpen: boolean = true) {
   const content = await getCurrentDocumentContent()
   let original = ''
   let pos: any = null
@@ -528,7 +568,20 @@ async function openStructuredApplyPreview(targets: any[] | undefined, resultText
     fixOriginalText.value = original
     fixSuggestedText.value = resultText
     fixPosition.value = pos
-    diffPreviewVisible.value = true
+    if (autoOpen) diffPreviewVisible.value = true
+  } catch {}
+}
+
+function openPreparedDiffPreview() {
+  diffPreviewVisible.value = true
+}
+
+function onMessageClick(m: any) {
+  try {
+    const t = String(m?.content || '')
+    if (/已生成改动预览/.test(t) || /查看完整对比/.test(t)) {
+      openPreparedDiffPreview()
+    }
   } catch {}
 }
 const runtimeConfig = useRuntimeConfig()
@@ -608,7 +661,13 @@ watch([selectedModel, () => modelOptions], () => {
 const currentModel = computed(() => modelOptions.find((m) => m.id === selectedModel.value));
 const generalSpec = computed(() => currentModel.value?.general ?? { max_tokens: { min: 16, max: 32768, step: 16, default: 2048 } });
 const apiModel = computed(() => currentModel.value?.apiModel || defaultModel);
-const gpt5Spec = computed(() => (modelOptions.find((m) => m.id === "gpt-5")?.specific ?? { verbosity: { options: ["low", "medium", "high"], default: "medium" }, reasoning_effort: { options: ["low", "medium", "high"], default: "medium" }));
+const gpt5Spec = computed(() => {
+  const spec = modelOptions.find((m) => m.id === "gpt-5")?.specific;
+  return spec ?? {
+    verbosity: { options: ["low", "medium", "high"], default: "medium" },
+    reasoning_effort: { options: ["low", "medium", "high"], default: "medium" },
+  };
+});
 const gpt5ExtrasEnabled = useLocalStorage<boolean>("chatbot.gpt5Extras", gpt5ExtrasDefault);
 // Inline text settings
 const inlineTextAuto = useLocalStorage<boolean>('chatbot.inlineTextAuto', true)
@@ -1081,22 +1140,28 @@ async function simulateAssistant(userText: string) {
           });
         } catch {}
         const rawText = ensureText(normalizeResponsesOutput(res))
-        const parsed = tryParseStructuredJSON(rawText)
+        // Prefer json part from Responses output; fallback to parsing text
+        const parsed = extractStructuredFromResponsesPayload(res) || tryParseStructuredJSON(rawText)
         if (parsed) {
           // reasoning
           if (typeof parsed.reasoning === 'string' && parsed.reasoning.trim()) {
-            pushMessage({ role: 'assistant', content: '推理摘要\n' + parsed.reasoning.trim() })
+            // Show a small collapsible preview tile; click to expand full
+            const preview = (parsed.reasoning.trim().slice(0, 120) + (parsed.reasoning.trim().length > 120 ? '…' : ''))
+            pushMessage({ role: 'assistant', content: '推理摘要（点击查看完整对比）\n' + preview })
           }
           // steps (optional verbose thinking outline)
           if (Array.isArray(parsed.steps) && parsed.steps.length) {
-            pushMessage({ role: 'assistant', content: '思考步骤\n- ' + parsed.steps.join('\n- ') })
+            const previewSteps = parsed.steps.slice(0, 4)
+            pushMessage({ role: 'assistant', content: '步骤预览\n- ' + previewSteps.join('\n- ') + (parsed.steps.length > 4 ? '\n…' : '') })
           }
           // reply (assistant-friendly summary for chat)
           if (typeof parsed.reply === 'string' && parsed.reply.trim()) {
             pushMessage({ role: 'assistant', content: sanitizeForDisplay(parsed.reply.trim()) })
           }
           // result -> open diff apply preview (do not echo to chat)
-          await openStructuredApplyPreview(parsed.targets, String(parsed.result || ''))
+          await openStructuredApplyPreview(parsed.targets, String(parsed.result || ''), false)
+          // Insert a compact hint tile to open the prepared diff
+          pushMessage({ role: 'assistant', content: '已生成改动预览，点击以查看并应用。' })
         } else {
           const text = sanitizeForDisplay(ensureText(rawText));
           pushMessage({ role: "assistant", content: text });
@@ -2566,7 +2631,7 @@ async function processFixInChatMessage(userText: string) {
  * 构建 Fix-in-Chat 专用提示
  */
 function buildFixInChatPrompt(userInstruction: string, originalText: string, context: SelectionContext): string {
-  let prompt = `请根据用户指令修改以下文本。只返回修改后的文本，不要任何解释。\n\n`;
+  let prompt = `请根据用户指令修改以下文本。只返回修改后的文本，不要任何解释或者前后缀。\n\n`;
   
   // 添加上下文信息
   if (context.sectionType && context.sectionType !== 'other') {
@@ -2844,6 +2909,15 @@ onMounted(() => {
   
   // 监听 Fix-in-Chat 事件
   window.addEventListener("start-fix-in-chat", handleFixInChatEvent);
+  // 允许外部在创建后把部分结构化内容注入到聊天记录
+  window.addEventListener('chatbot-append-message', (e: any) => {
+    try {
+      const d = (e && e.detail) || {}
+      const role = d.role || 'assistant'
+      const content = sanitizeForDisplay(ensureText(d.content || ''))
+      if (content) pushMessage({ role, content })
+    } catch {}
+  })
   
   // 监听工作区选区变化事件
   window.addEventListener("workspace-selection-changed", handleSelectionChanged);

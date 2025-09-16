@@ -15,15 +15,15 @@
           <div text-sm text-light-c>{{ $t('resumes.choose_doc_type') || 'Choose document type' }}</div>
           <div class="grid grid-cols-3 gap-3">
             <button
-              class="px-3 py-2 rounded border border-c hover:border-darker-c hover:bg-dark-c"
+              :class="['px-3 py-2 rounded border hover:border-darker-c hover:bg-dark-c', curDoc === 'cv' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-c']"
               @click="step = 'lang'; curDoc = 'cv'"
             >CV</button>
             <button
-              class="px-3 py-2 rounded border border-c hover:border-darker-c hover:bg-dark-c"
+              :class="['px-3 py-2 rounded border hover:border-darker-c hover:bg-dark-c', curDoc === 'ps' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-c']"
               @click="step = 'lang'; curDoc = 'ps'"
             >{{ $t('resumes.ps') || 'Personal Statement' }}</button>
             <button
-              class="px-3 py-2 rounded border border-c hover:border-darker-c hover:bg-dark-c"
+              :class="['px-3 py-2 rounded border hover:border-darker-c hover:bg-dark-c', curDoc === 'rec' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-c']"
               @click="step = 'lang'; curDoc = 'rec'"
             >{{ $t('resumes.rec') || 'Recommendation' }}</button>
           </div>
@@ -32,12 +32,12 @@
             <div text-sm text-light-c>{{ $t('resumes.choose_lang') || 'Choose language' }}</div>
             <div class="grid grid-cols-2 gap-3">
               <button
-                class="px-3 py-2 rounded border border-c hover:border-darker-c hover:bg-dark-c"
-                @click="curDoc === 'ps' ? setLang('en') : createBy(curDoc, 'en')"
+                :class="['px-3 py-2 rounded border hover:border-darker-c hover:bg-dark-c', lang === 'en' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-c']"
+                @click="(curDoc === 'ps' || curDoc === 'rec') ? setLang('en') : createBy(curDoc, 'en')"
               >English</button>
               <button
-                class="px-3 py-2 rounded border border-c hover:border-darker-c hover:bg-dark-c"
-                @click="curDoc === 'ps' ? setLang('zh') : createBy(curDoc, 'zh')"
+                :class="['px-3 py-2 rounded border hover:border-darker-c hover:bg-dark-c', lang === 'zh' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-c']"
+                @click="(curDoc === 'ps' || curDoc === 'rec') ? setLang('zh') : createBy(curDoc, 'zh')"
               >中文</button>
             </div>
           </div>
@@ -58,6 +58,18 @@
               <button class="px-3 py-1 rounded bg-blue-600 text-white hover:opacity-90" :disabled="!canConfirm" @click="confirmCreate">确定</button>
             </div>
           </div>
+          <div v-if="curDoc === 'rec'" class="mt-4 space-y-2">
+            <div text-sm text-light-c>推荐信素材上传</div>
+            <div class="space-y-1">
+              <label class="text-xs text-light-c">上传文件（必需）</label>
+              <input type="file" :accept="acceptedRecTypes" @change="onRecSelect" />
+              <div v-if="recName" class="text-xs text-light-c">已选择：{{ recName }}</div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2 border-t border-c">
+              <button class="px-3 py-1 rounded bg-gray-200 dark:bg-gray-600" @click="resetDialog">取消</button>
+              <button class="px-3 py-1 rounded bg-blue-600 text-white hover:opacity-90" :disabled="!canConfirm || recSubmitting" @click="confirmCreateRec">确定</button>
+            </div>
+          </div>
         </div>
       </template>
     </Dialog>
@@ -67,14 +79,23 @@
 
 <script lang="ts" setup>
 const runtimeConfig = useRuntimeConfig()
+const backendBase = computed(() => String((runtimeConfig.public as any)?.backendBase || '').replace(/\/$/, ''))
 const psCfg = computed(() => (runtimeConfig.public as any)?.ps || { requireUpload: false, allowedUploadTypes: ["application/pdf"] })
+const recCfg = computed(() => (runtimeConfig.public as any)?.rec || { requireUpload: true, allowedUploadTypes: ["application/pdf"] })
 const acceptedTypes = computed(() => Array.isArray(psCfg.value.allowedUploadTypes) && psCfg.value.allowedUploadTypes.length > 0
   ? psCfg.value.allowedUploadTypes.join(',')
   : 'application/pdf')
+const acceptedRecTypes = computed(() => {
+  const types = Array.isArray(recCfg.value.allowedUploadTypes) && recCfg.value.allowedUploadTypes.length > 0
+    ? recCfg.value.allowedUploadTypes.join(',')
+    : 'application/pdf'
+  // Always allow .pdf extension as fallback for browsers that set generic mime types
+  return types.includes('.pdf') ? types : `${types},.pdf`
+})
 const router = useRouter();
 const localePath = useLocalePath();
 import { useToast } from "~/composables/toast";
-import { newResume } from "~/utils/database";
+import { newResume, newResumeFromImport } from "~/utils/database";
 import { buildTemplateKey, buildPsTemplateKey } from "~/utils";
 const toast = useToast();
 
@@ -89,12 +110,22 @@ const projectInfo = ref("")
 const studentInfo = ref("")
 const pdfBase64 = ref<string | null>(null)
 const pdfName = ref<string>("")
+const recBase64 = ref<string | null>(null)
+const recName = ref<string>("")
+const recSubmitting = ref<boolean>(false)
 
 const setLang = (l: Lang) => { lang.value = l }
 const canConfirm = computed(() => {
-  if (curDoc.value !== 'ps') return true
-  if (!lang.value) return false
-  if (psCfg.value.requireUpload && !pdfBase64.value) return false
+  if (curDoc.value === 'ps') {
+    if (!lang.value) return false
+    if (psCfg.value.requireUpload && !pdfBase64.value) return false
+    return true
+  }
+  if (curDoc.value === 'rec') {
+    if (!lang.value) return false
+    if (recCfg.value.requireUpload && !recBase64.value) return false
+    return true
+  }
   return true
 })
 
@@ -105,6 +136,7 @@ const resetDialog = () => {
   projectInfo.value = ''
   studentInfo.value = ''
   pdfBase64.value = null
+  recBase64.value = null
 }
 
 const onPdfSelect = async (e: Event) => {
@@ -256,5 +288,225 @@ const confirmCreate = async () => {
   }
 
   router.push(localePath(`/edit/${outlineId}`));
+}
+
+const onRecSelect = async (e: Event) => {
+  const input = e.target as HTMLInputElement
+  const file = input?.files?.[0]
+  if (!file) return
+  try {
+    const okTypes = (recCfg.value.allowedUploadTypes as string[]) || []
+    const isPdfExt = /\.pdf$/i.test(file.name || '')
+    if (okTypes.length > 0 && !okTypes.includes(file.type) && !isPdfExt) {
+      recBase64.value = null
+      recName.value = ''
+      ;(toast as any).import(false)
+      return
+    }
+  } catch {}
+  recName.value = file.name || 'attachment.bin'
+  const reader = new FileReader()
+  reader.onload = () => {
+    const res = typeof reader.result === 'string' ? reader.result : ''
+    const comma = res.indexOf(',')
+    recBase64.value = comma >= 0 ? res.slice(comma + 1) : res
+  }
+  reader.readAsDataURL(file)
+}
+
+// Helpers: format structured fields for chatbot display
+const isPlainObject = (v: any): boolean => !!v && typeof v === 'object' && !Array.isArray(v)
+const safeString = (v: any): string => {
+  if (typeof v === 'string') return v
+  try { return JSON.stringify(v, null, 2) } catch { return String(v) }
+}
+const formatMaterial = (material: any): string => {
+  if (!material) return ''
+  if (typeof material === 'string') return material.trim()
+  try {
+    const stories = Array.isArray(material?.stories) ? material.stories : []
+    if (!stories.length) return safeString(material)
+    const blocks: string[] = []
+    stories.forEach((s: any, idx: number) => {
+      const title = s?.title ? String(s.title) : `Story ${idx + 1}`
+      const star = s?.STAR || s?.star || s || {}
+      const sit = star?.Situation || star?.situation || ''
+      const task = star?.Task || star?.task || ''
+      const action = star?.Action || star?.action || ''
+      const result = star?.Result || star?.result || ''
+      const lines: string[] = []
+      lines.push(`${idx + 1}) ${title}`)
+      if (sit) lines.push(`- Situation: ${sit}`)
+      if (task) lines.push(`- Task: ${task}`)
+      if (action) lines.push(`- Action: ${action}`)
+      if (result) lines.push(`- Result: ${result}`)
+      blocks.push(lines.join('\n'))
+    })
+    return blocks.join('\n\n')
+  } catch {
+    return safeString(material)
+  }
+}
+const formatOutline = (outline: any): string => {
+  if (!outline) return ''
+  if (typeof outline === 'string') return outline.trim()
+  try {
+    const lines: string[] = []
+    const opening = outline?.opening || outline?.intro || ''
+    if (opening) { lines.push('Opening:'); lines.push(String(opening)) }
+    const bps = Array.isArray(outline?.body_paragraphs || outline?.body)
+      ? (outline.body_paragraphs || outline.body)
+      : []
+    bps.forEach((bp: any, i: number) => {
+      if (typeof bp === 'string') {
+        lines.push(`Body ${i + 1}:`)
+        lines.push(bp)
+      } else {
+        const focus = bp?.focus || bp?.title || `Body ${i + 1}`
+        const content = bp?.content || ''
+        lines.push(`Body ${i + 1} - ${focus}:`)
+        if (content) lines.push(String(content))
+      }
+    })
+    const closing = outline?.closing || outline?.conclusion || outline?.outro || ''
+    if (closing) { lines.push('Closing:'); lines.push(String(closing)) }
+    return lines.join('\n')
+  } catch {
+    return safeString(outline)
+  }
+}
+const formatChecks = (checks: any): string => {
+  if (!checks) return ''
+  if (typeof checks === 'string') return checks.trim()
+  if (isPlainObject(checks)) {
+    const lines: string[] = []
+    const entries = Object.entries(checks as Record<string, any>)
+    const valuesAreArrays = entries.every(([, v]) => Array.isArray(v))
+    if (valuesAreArrays) {
+      for (const [k, arr] of entries) {
+        const pretty = k.replace(/_/g, ' ')
+        lines.push(`${pretty}:`)
+        for (const item of arr as any[]) lines.push(`- ${safeString(item)}`)
+        lines.push('')
+      }
+      return lines.join('\n').trim()
+    } else {
+      for (const [k, v] of entries) {
+        const mark = v ? '✓' : '✗'
+        const pretty = k.replace(/_/g, ' ')
+        lines.push(`- ${pretty}: ${mark}`)
+      }
+      return lines.join('\n')
+    }
+  }
+  if (Array.isArray(checks)) return checks.map((x: any) => `- ${safeString(x)}`).join('\n')
+  return safeString(checks)
+}
+
+const confirmCreateRec = async () => {
+  if (curDoc.value !== 'rec' || !lang.value) return
+  if (!recBase64.value) return
+  recSubmitting.value = true
+  try {
+    const up: any = await $fetch(`${backendBase.value}/api/files/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: { name: recName.value || 'upload.bin', contentBase64: recBase64.value, purpose: 'user_data' }
+    })
+    if (!up || up.status !== 'ok' || !up.file || !up.file.id) throw new Error('upload_failed')
+    const fileId = up.file.id as string
+    const res: any = await $fetch(`${backendBase.value}/api/rec/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: { file_ids: [fileId], max_output_tokens: 8192, reasoning_effort: 'medium' } })
+    // 仅提取 Structured Outputs 的 result，并将 "\n" 转义为真正的换行
+    const unescapeNewlines = (t: string) => (t || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
+    const pickResultString = (obj: any): string => {
+      const r = obj?.result
+      if (typeof r === 'string') return r
+      if (r && typeof r === 'object') {
+        const en = String(
+          r.letter_en || r.recommendation_en || r.english || r.en || ''
+        )
+        const zh = String(
+          r.letter_zh || r.recommendation_zh || r.chinese || r.zh || r.zh_cn || r.cn || ''
+        )
+        if (en && zh) return en + '\n\n' + zh
+        if (en || zh) return en || zh
+        // 未识别的对象结构，返回空以便后续使用后端提供的 output_text 回退
+        return ''
+      }
+      return ''
+    }
+    let content = ''
+    let reasoningForChat = ''
+    try {
+      const raw = res?.raw
+      if (raw && Array.isArray(raw.output)) {
+        outer: for (const item of raw.output) {
+          const parts = item?.content || []
+          for (const p of parts) {
+            if (p && typeof p.json === 'object' && p.json) {
+              const resultText = pickResultString(p.json)
+              const rs = (p.json || {}).reasoning_summary
+              if (typeof rs === 'string') reasoningForChat = rs
+              if (resultText) {
+                content = unescapeNewlines(resultText)
+                break outer
+              }
+            }
+          }
+        }
+      }
+      if (!content && typeof res?.output_text === 'string' && res.output_text.trim()) {
+        content = unescapeNewlines(res.output_text.trim())
+      }
+    } catch {}
+    // 将其他结构化部分与 reasoning_summary 写入 Chatbot 历史（使用 convStore 以确保页面装载后可见）
+    try {
+      const { convStore } = await import('~/data/contextStore')
+      const msgs: string[] = []
+      const others = res?.others || {}
+      const mat = formatMaterial(others.material)
+      if (mat) msgs.push(`【素材提炼】\n${mat}`)
+      const out = formatOutline(others.outline)
+      if (out) msgs.push(`【写作大纲】\n${out}`)
+      const chk = formatChecks(others.checks)
+      if (chk) msgs.push(`【质量检查确认】\n${chk}`)
+      const rs = reasoningForChat || (others.reasoning_summary || '')
+      if (rs) msgs.push(`【推理摘要】\n${rs}`)
+      if (Array.isArray(others.steps) && others.steps.length) msgs.push(`【步骤】\n- ${others.steps.join('\n- ')}`)
+      if (msgs.length) {
+        // 先建文档，再将消息追加到该文档的 chatId（等于文档 id）
+        // 注意：下面会在拿到 id 后 append
+        ;(window as any).__pendingChatMessages = msgs
+      }
+    } catch {}
+    try {
+      const raw = res?.raw
+      if (!content && raw && Array.isArray(raw.output)) {
+        for (const item of raw.output) {
+          const parts = item?.content || []
+          for (const p of parts) {
+            if (p && typeof p.text === 'string') content += p.text
+            if (p && typeof p.json === 'object' && p.json && typeof p.json.result === 'string') content = p.json.result
+          }
+        }
+      }
+      if (!content && typeof raw?.reply === 'string') content = raw.reply
+    } catch {}
+    const id = await newResumeFromImport(content || '', recName.value.replace(/\.[^.]+$/, '') || 'Recommendation')
+    try {
+      const msgs: string[] = (window as any).__pendingChatMessages || []
+      if (msgs.length) {
+        const { convStore } = await import('~/data/contextStore')
+        for (const m of msgs) convStore.appendMessage(id, 'assistant', m)
+        ;(window as any).__pendingChatMessages = []
+      }
+    } catch {}
+    try { localStorage.setItem('doc_meta_' + id, JSON.stringify({ docType: 'rec', lang: lang.value })) } catch {}
+    router.push(localePath(`/edit/${id}`))
+  } catch (e) {
+    ;(toast as any).import(false)
+  } finally {
+    recSubmitting.value = false
+  }
 }
 </script>
