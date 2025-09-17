@@ -22,3 +22,7 @@ logs
 .env
 .env.*
 !.env.example
+
+backend_fastapi/.venv/
+
+backend_fastapi/app/__pycache__/

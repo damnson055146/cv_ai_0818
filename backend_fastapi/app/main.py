@@ -1,8 +1,10 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 import os
 import httpx
+from .toolbar_ai import router as toolbar_router
+
 
 # Load envs from backend_fastapi/.env if present
 try:
@@ -12,6 +14,7 @@ except Exception:
     pass
 
 app = FastAPI(title="cv-ai FastAPI backend")
+app.include_router(toolbar_router)
 
 # CORS for frontend dev (Nuxt at :3000)
 _cors_origins_env = os.getenv("FASTAPI_CORS_ALLOW_ORIGINS", "").strip()
@@ -183,19 +186,19 @@ REC_PROMPT = (
 **格式**：纯文本，结构如下
 
 【素材提炼】
-故事1：\[STAR格式]
-故事2：\[STAR格式]
-故事3：\[STAR格式]
+故事1：\\[STAR格式]
+故事2：\\[STAR格式]
+故事3：\\[STAR格式]
 
 【写作大纲】
-\[结构化大纲内容]
+\\[结构化大纲内容]
 
 【推荐信全文】长度：约320词
-\[完整的英文推荐信]
-\[中文翻译]
+\\[完整的英文推荐信]
+\\[中文翻译]
 
 【质量检查确认】
-\[确认通过的检查项目清单]
+\\[确认通过的检查项目清单]
 
 
 ## 输入信息
@@ -742,6 +745,43 @@ async def files_upload(req: Request):
         return JSONResponse(status_code=r.status_code, content={"status": "error", "error": data})
     return {"status": "ok", "file": data}
 
+
+# Get OpenAI File metadata
+@app.get("/api/files/meta/{file_id}")
+async def files_meta(file_id: str):
+    api_key = get_openai_key()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.get(
+            f"https://api.openai.com/v1/files/{file_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+    if "application/json" in (r.headers.get("content-type", "")):
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    return JSONResponse(status_code=r.status_code, content={"text": r.text})
+
+
+# Stream OpenAI File content (for preview/download)
+@app.get("/api/files/content/{file_id}")
+async def files_content(file_id: str):
+    api_key = get_openai_key()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.get(
+            f"https://api.openai.com/v1/files/{file_id}/content",
+            headers={"Authorization": f"Bearer {api_key}"},
+            follow_redirects=True,
+        )
+    if r.status_code >= 400:
+        try:
+            return JSONResponse(status_code=r.status_code, content=r.json())
+        except Exception:
+            return JSONResponse(status_code=r.status_code, content={"error": r.text})
+    # Pass-through with best-effort content type
+    content_type = r.headers.get("content-type", "application/octet-stream")
+    disposition = r.headers.get("content-disposition")
+    headers = {"Content-Type": content_type}
+    if disposition:
+        headers["Content-Disposition"] = disposition
+    return Response(content=r.content, headers=headers, status_code=200)
 
 # Convert to Markdown using AI (FastAPI version)
 @app.post("/api/convert-to-md")

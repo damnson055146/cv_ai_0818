@@ -415,6 +415,21 @@ const confirmCreateRec = async () => {
     })
     if (!up || up.status !== 'ok' || !up.file || !up.file.id) throw new Error('upload_failed')
     const fileId = up.file.id as string
+    // 记录附件消息，供 Chatbot 展示与预览
+    try {
+      const name = recName.value || 'upload.bin'
+      const lower = name.toLowerCase()
+      const mime = /\.pdf$/.test(lower) ? 'application/pdf'
+        : /\.docx$/.test(lower) ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : /\.doc$/.test(lower) ? 'application/msword'
+        : /\.md$/.test(lower) ? 'text/markdown'
+        : /\.txt$/.test(lower) ? 'text/plain'
+        : ''
+      const payload = { images: [], files: [{ id: fileId, name, mime }] }
+      const marker = '[[ATTACHMENTS]]' + JSON.stringify(payload)
+      ;(window as any).__pendingChatMessages = ((window as any).__pendingChatMessages || [])
+      ;(window as any).__pendingChatMessages.unshift(marker)
+    } catch {}
     const res: any = await $fetch(`${backendBase.value}/api/rec/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: { file_ids: [fileId], max_output_tokens: 8192, reasoning_effort: 'medium' } })
     // 仅提取 Structured Outputs 的 result，并将 "\n" 转义为真正的换行
     const unescapeNewlines = (t: string) => (t || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')

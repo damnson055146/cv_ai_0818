@@ -219,16 +219,48 @@
       <!-- Messages -->
       <div ref="scrollRef" class="flex-1 px-4 py-4 space-y-3 overflow-y-auto bg-c">
         <div v-for="m in messages" :key="m.id" class="w-full" @click="onMessageClick(m)">
-          <div
-            v-if="m.role === 'assistant'"
-            class="w-full">
+          <div v-if="m.role === 'assistant'" class="w-full">
             <div class="max-w-4/5 md:max-w-3/4 bg-gray-100 dark:bg-slate-600 border border-light-c rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap">
-              {{ m.content }}
+              <template v-if="!isAttachmentMessage(m.content)">
+                {{ m.content }}
+              </template>
+              <template v-else>
+                <div class="flex flex-wrap items-center gap-2">
+                  <template v-for="(img, i) in parseAttachmentPayload(m.content).images" :key="'att-img-'+i">
+                    <button type="button" class="relative w-16 h-16" @click.stop="openPreview({ kind: 'image', src: img.dataUrl })">
+                      <img :src="img.dataUrl" class="w-16 h-16 object-cover rounded border border-light-c" />
+                    </button>
+                  </template>
+                  <template v-for="(f, i) in parseAttachmentPayload(m.content).files" :key="'att-file-'+(f.id||i)">
+                    <button type="button" class="inline-flex items-center gap-1 px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 border border-light-c text-xs" @click.stop="openPreview({ kind: 'file', id: f.id, name: f.name, mime: f.mime })">
+                      <span class="i-ph:file-text text-gray-600 dark:text-gray-300" />
+                      <span class="max-w-48 truncate">{{ f.name || f.id }}</span>
+                    </button>
+                  </template>
+                </div>
+              </template>
             </div>
           </div>
           <div v-else class="w-full flex justify-end">
             <div class="max-w-4/5 md:max-w-3/4 bg-white text-black border border-light-c rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap">
-              {{ m.content }}
+              <template v-if="!isAttachmentMessage(m.content)">
+                {{ m.content }}
+              </template>
+              <template v-else>
+                <div class="flex flex-wrap items-center gap-2">
+                  <template v-for="(img, i) in parseAttachmentPayload(m.content).images" :key="'att2-img-'+i">
+                    <button type="button" class="relative w-16 h-16" @click.stop="openPreview({ kind: 'image', src: img.dataUrl })">
+                      <img :src="img.dataUrl" class="w-16 h-16 object-cover rounded border border-light-c" />
+                    </button>
+                  </template>
+                  <template v-for="(f, i) in parseAttachmentPayload(m.content).files" :key="'att2-file-'+(f.id||i)">
+                    <button type="button" class="inline-flex items-center gap-1 px-2 py-1 rounded bg-gray-100 border border-light-c text-xs" @click.stop="openPreview({ kind: 'file', id: f.id, name: f.name, mime: f.mime })">
+                      <span class="i-ph:file-text text-gray-600" />
+                      <span class="max-w-48 truncate">{{ f.name || f.id }}</span>
+                    </button>
+                  </template>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -385,6 +417,24 @@
     @reject="rejectFixSuggestion"
     @edit="editFixSuggestion"
   />
+
+  <!-- 文件/图片预览弹窗 -->
+  <div v-if="previewVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="closePreview">
+    <div class="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-[90vw] max-h-[90vh] w-[800px] p-3">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-sm font-medium">{{ previewTitle }}</div>
+        <button class="px-2 py-1 text-xs rounded bg-gray-200 dark:bg-gray-600" @click="closePreview">关闭</button>
+      </div>
+      <div class="border border-light-c rounded overflow-auto max-h-[80vh]">
+        <template v-if="previewState?.kind === 'image'">
+          <img :src="previewState.src" class="max-w-full max-h-[78vh] object-contain" />
+        </template>
+        <template v-else>
+          <iframe :src="previewUrl" class="w-full h-[78vh] bg-white" />
+        </template>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -402,12 +452,54 @@ import { UpdateManager } from "~/data/updateManager";
 import { buildContext } from "~/data/contextBuilder";
 import { convStore } from "~/data/contextStore";
 
+
 type Role = "user" | "assistant" | "system";
 interface Message {
   id: number;
   role: Role;
   content: string;
 }
+
+// Attachment bubble payload format marker
+function isAttachmentMessage(content: any): boolean {
+  return typeof content === 'string' && content.startsWith('[[ATTACHMENTS]]')
+}
+function parseAttachmentPayload(content: any): { images: Array<{ dataUrl: string }>; files: Array<{ id: string; name?: string; mime?: string }> } {
+  if (!isAttachmentMessage(content)) return { images: [], files: [] }
+  const json = String(content).replace(/^\[\[ATTACHMENTS\]\]/, '')
+  try {
+    const obj = JSON.parse(json)
+    const images = Array.isArray(obj?.images) ? obj.images.filter((x: any) => typeof x?.dataUrl === 'string') : []
+    const files = Array.isArray(obj?.files) ? obj.files.filter((x: any) => typeof x?.id === 'string') : []
+    return { images, files }
+  } catch {
+    return { images: [], files: [] }
+  }
+}
+
+// Preview modal state
+const previewVisible = ref(false)
+const previewState = ref<any>(null)
+const previewUrl = ref('')
+const previewTitle = computed(() => {
+  const p = previewState.value
+  if (!p) return ''
+  if (p.kind === 'image') return p.name || 'Image'
+  return p.name || 'File preview'
+})
+function openPreview(p: any) {
+  previewState.value = p
+  if (p.kind === 'image') {
+    previewUrl.value = ''
+  } else if (p.kind === 'file') {
+    const base = backendBase || ''
+    const url = (base ? base.replace(/\/$/, '') : '') + '/api/files/content/' + encodeURIComponent(p.id)
+    // For inline preview, prefer browser support via iframe; otherwise user can download from iframe
+    previewUrl.value = url
+  }
+  previewVisible.value = true
+}
+function closePreview() { previewVisible.value = false; previewState.value = null; previewUrl.value = '' }
 
 // Preset system prompt
 const SYSTEM_PROMPT =
@@ -879,6 +971,17 @@ async function handleSend() {
   if (!canSend.value) return;
   const text = draft.value.trim();
   draft.value = "";
+  // If user has any attachments queued, first push an attachment bubble
+  if ((imageDataUrls.value.length + uploadedFiles.value.length + inlineTextSnippets.value.length) > 0) {
+    const payload = {
+      images: imageDataUrls.value.map(src => ({ dataUrl: src })),
+      files: uploadedFiles.value.map(f => ({ id: f.id, name: f.name, mime: f.mime }))
+    }
+    try {
+      const marker = '[[ATTACHMENTS]]' + JSON.stringify(payload)
+      pushMessage({ role: 'user', content: marker })
+    } catch {}
+  }
   pushMessage({ role: "user", content: text });
   // Reset input height after sending long messages
   nextTick(() => resetInputHeight());
@@ -927,13 +1030,14 @@ async function handleSend() {
 
 function pushMessage(partial: Omit<Message, "id">) {
   const id = Date.now() + Math.random();
-  const content = ensureText(partial.content as any);
-  messages.value.push({ id, role: partial.role, content });
+  const contentRaw = partial.content as any
+  const content = typeof contentRaw === 'string' ? ensureText(contentRaw) : contentRaw
+  messages.value.push({ id, role: partial.role, content: content as any });
   // 写入按文档分隔的对话记忆（仅本地）
   try {
     const key = chatScopedId.value
     if (key && (partial.role === 'user' || partial.role === 'assistant')) {
-      convStore.appendMessage(key, partial.role as any, content)
+      convStore.appendMessage(key, partial.role as any, typeof content === 'string' ? content : JSON.stringify(content))
     }
   } catch {}
   nextTick(() => scrollToBottom());
@@ -3016,7 +3120,7 @@ async function resetPromptsToDefault() {
 // Uploads state (images dataURL, pdf file id)
 const imageDataUrls = ref<string[]>([])
 const uploadedFileIds = ref<string[]>([])
-const uploadedFiles = ref<Array<{ id: string; name?: string }>>([])
+const uploadedFiles = ref<Array<{ id: string; name?: string; mime?: string }>>([])
 const inlineTextSnippets = ref<Array<{ name: string; text: string }>>([])
 
 function onPickImages(e: Event) {

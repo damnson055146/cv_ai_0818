@@ -1,283 +1,823 @@
 <template>
-  <div ref="root" v-show="visible" class="ai-toolbar fixed z-50 bg-c/90 border border-c/60 rounded-xl shadow-xl backdrop-blur-md p-2 text-xs"
-       :style="{ left: `${pos.x}px`, top: `${pos.y}px` }">
-    <div class="flex items-center space-x-1">
-      <button class="round-btn" title="Collapse/Expand" @click="collapsed = !collapsed">{{ collapsed ? '⮟' : '⮝' }}</button>
-      <button class="round-btn" @click="run">Rewrite (o3)</button>
-      <button class="round-btn" @click="copy">Copy</button>
-      <button class="round-btn" @click="paste">Paste</button>
+
+  <div
+
+    ref="root"
+
+    v-show="visible"
+
+    class="ai-toolbar fixed z-50"
+
+    :class="{ 'is-dragging': isDragging }"
+
+    :style="{ left: `${pos.x}px`, top: `${pos.y}px` }"
+
+  >
+
+    <div class="toolbar-shell">
+
+      <div class="toolbar-header" @pointerdown.prevent="onDragStart">
+
+        <div class="header-info">
+
+          <span class="i-ph:sparkle-duotone text-lg text-brand" />
+
+          <div>
+
+            <p class="title">AI 润色助手</p>
+
+            <p class="subtitle">快速降低 AI 痕迹</p>
+
+          </div>
+
+        </div>
+
+        <button class="toolbar-icon-btn" title="展开/收起" @pointerdown.stop @click="collapsed = !collapsed">
+
+          <span :class="collapsed ? 'i-ph:caret-down' : 'i-ph:caret-up'" />
+
+        </button>
+
+      </div>
+
+
+
+      <div class="toolbar-actions">
+
+        <button class="toolbar-primary" :class="{ 'loading': isLoading }" :disabled="isLoading" @click="run">
+          <span v-if="isLoading" class="flex items-center gap-2">
+            <span class="i-ph:spinner-gap-duotone animate-spin text-base" />
+            <span>处理中...</span>
+          </span>
+          <span v-else>降低AI率</span>
+        </button>
+
+        <button class="toolbar-icon-btn" :disabled="isLoading" @click="copy">
+          <span class="i-ph:copy-simple" />
+          <span>复制</span>
+        </button>
+
+        <button class="toolbar-icon-btn" :disabled="isLoading" @click="paste">
+          <span class="i-ph:clipboard-text" />
+          <span>粘贴</span>
+        </button>
+
+      </div>
+
+
+
+      <transition name="fade">
+
+        <div v-show="!collapsed" class="toolbar-panel">
+
+          <div class="preset-row">
+
+            <label class="preset-label">提示预设</label>
+
+            <select v-model="selectedPreset" class="preset-select">
+
+              <option value="">自定义</option>
+
+              <option v-for="p in presets" :key="p.name" :value="p.name">{{ p.name }}</option>
+
+            </select>
+
+            <input v-model="newPresetName" class="preset-input" placeholder="保存为…" />
+
+            <button class="toolbar-icon-btn" @click="savePreset">
+
+              <span class="i-ph:floppy-disk" />
+
+              <span>保存</span>
+
+            </button>
+
+            <button class="toolbar-icon-btn" :disabled="!selectedPreset" @click="deletePreset">
+
+              <span class="i-ph:trash" />
+
+              <span>删除</span>
+
+            </button>
+
+          </div>
+
+          <textarea
+
+            v-model="prompt"
+
+            class="prompt-area"
+
+            placeholder="输入润色指令，或选择上方预设"
+
+          ></textarea>
+
+        </div>
+
+      </transition>
+
     </div>
 
-    <div v-show="!collapsed" class="mt-2 space-y-1 max-w-120">
-      <div class="flex items-center space-x-1">
-        <select v-model="selectedPreset" class="border border-c/60 rounded px-1 py-0.5 bg-transparent w-44">
-          <option value="">Select preset…</option>
-          <option v-for="p in presets" :key="p.name" :value="p.name">{{ p.name }}</option>
-        </select>
-        <input v-model="newPresetName" class="border border-c/60 rounded px-1 py-0.5 bg-transparent w-36" placeholder="Preset name" />
-        <button class="round-btn" @click="savePreset">Save</button>
-        <button class="round-btn" :disabled="!selectedPreset" @click="deletePreset">Delete</button>
+
+
+    <div v-if="showPreview" class="preview-bubble">
+
+      <div class="preview-header">
+
+        <span class="i-ph:magic-wand-duotone text-brand" />
+
+        <span>预览</span>
+
       </div>
-      <textarea v-model="prompt" class="border border-c/60 rounded px-2 py-1 bg-transparent w-80 h-22 leading-5" placeholder="Custom prompt"></textarea>
+
+      <div class="preview-content">{{ previewText }}</div>
+
+      <div class="preview-actions">
+
+        <button class="toolbar-primary" @click="applyPreview">替换选区</button>
+
+        <button class="toolbar-icon-btn" @click="cancelPreview">取消</button>
+
+      </div>
+
     </div>
 
-    <!-- Preview bubble -->
-    <div v-if="showPreview" class="preview-bubble absolute left-2 top-full mt-2 bg-c border border-c/60 rounded-lg shadow-lg p-2 w-96 max-w-[80vw]">
-      <div class="font-medium mb-1">Preview</div>
-      <div class="border border-c/60 rounded p-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs">{{ previewText }}</div>
-      <div class="mt-2 hstack space-x-2">
-        <button class="round-btn" @click="applyPreview">Apply</button>
-        <button class="round-btn" @click="cancelPreview">Cancel</button>
-      </div>
-    </div>
   </div>
+
 </template>
 
+
+
 <script lang="ts" setup>
+
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+
 import { useWorkspaceStore } from "~/composables/stores/workspace";
+
 import { useWorkspaceOperator, OperationType } from "~/composables/workspaceOperator";
 
+
+
 const props = defineProps<{ getSelection: () => string; getSelectionRect: () => { x: number; y: number; visible: boolean }; applyText: (text: string) => void }>();
+
 const root = ref<HTMLElement | null>(null);
 
-const visible = ref(false);
-const pos = reactive({ x: 0, y: 0 });
-const collapsed = ref(true);
-const STORAGE_KEY = 'MR_AI_PROMPTS';
-type Preset = { name: string; prompt: string };
-const presets = ref<Preset[]>([]);
-const selectedPreset = ref('');
-const newPresetName = ref('');
-const prompt = ref('Rewrite the selected text to be concise and professional. Keep all markdown and custom tags unchanged. Return only the rewritten text. Do not include addional tags or any explanations.');
-const showPreview = ref(false);
-const previewText = ref('');
 
-let hideTimer: number | null = null;
+
+const visible = ref(false);
+
+const pos = reactive({ x: 0, y: 0 });
+
+const collapsed = ref(true);
+
+const runtimeConfig = useRuntimeConfig();
+const backendBase = computed(() => {
+  const raw = (runtimeConfig.public as any)?.backendBase || '';
+  return raw ? String(raw).replace(/\/$/, '') : '';
+});
+
+const STORAGE_KEY = 'MR_AI_PROMPTS';
+
+const DEFAULT_PROMPT = 'Rewrite the selected content so it feels human, personal, and natural. Preserve markdown, placeholders, and factual meaning while reducing AI-detection signals.';
+
+
+
+type Preset = { name: string; prompt: string };
+
+const presets = ref<Preset[]>([]);
+
+const selectedPreset = ref('');
+
+const newPresetName = ref('');
+
+const prompt = ref(DEFAULT_PROMPT);
+
+const showPreview = ref(false);
+
+const previewText = ref('');
+const isLoading = ref(false);
+
+const isDragging = ref(false);
+const dragOffset = reactive({ x: 0, y: 0 });
+let skipSelectionUpdate = false;
+
+const setPosition = (x: number, y: number) => {
+  if (typeof window === 'undefined') {
+    pos.x = x;
+    pos.y = y;
+    return;
+  }
+  const margin = 12;
+  const width = root.value?.offsetWidth ?? 0;
+  const height = root.value?.offsetHeight ?? 0;
+  const maxX = Math.max(margin, window.innerWidth - width - margin);
+  const maxY = Math.max(margin, window.innerHeight - height - margin);
+  pos.x = Math.min(Math.max(x, margin), maxX);
+  pos.y = Math.min(Math.max(y, margin), maxY);
+};
 
 const updateFromSelection = () => {
+  if (skipSelectionUpdate) {
+    skipSelectionUpdate = false;
+    return;
+  }
   const rect = props.getSelectionRect();
   visible.value = rect.visible;
   if (!rect.visible) return;
-  pos.x = rect.x;
-  pos.y = rect.y - 40;
+  setPosition(rect.x, rect.y - 56);
 };
 
+
+
 let mouseDownHandler: ((e: MouseEvent) => void) | null = null;
+
 let mouseUpHandler: ((e: MouseEvent) => void) | null = null;
 
-onMounted(() => {
-  mouseDownHandler = (e: MouseEvent) => {
-    if (root.value && root.value.contains(e.target as Node)) return; // clicks inside toolbar should not hide
-    visible.value = false;
-  };
-  mouseUpHandler = (e: MouseEvent) => {
-    if (root.value && root.value.contains(e.target as Node)) return; // ignore toolbar interactions
-    window.setTimeout(updateFromSelection, 0);
-  };
-  document.addEventListener('mousedown', mouseDownHandler, true);
-  document.addEventListener('mouseup', mouseUpHandler, true);
-  // load presets
+
+
+const buildApiUrl = (path: string) => {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  const backend = backendBase.value;
+  if (backend) return `${backend}${normalized}`;
+  const base = (typeof window !== 'undefined' && (window as any).__NUXT__?.config?.app?.baseURL) || '/';
+  const trimmed = base.endsWith('/') ? base.slice(0, -1) : base;
+  return `${trimmed}${normalized}`;
+};
+
+function onDragMove(event: PointerEvent) {
+  if (!isDragging.value) return;
+  setPosition(event.clientX - dragOffset.x, event.clientY - dragOffset.y);
+}
+
+function detachDragListeners() {
+  if (typeof window === 'undefined') return;
+  window.removeEventListener('pointermove', onDragMove);
+  window.removeEventListener('pointerup', onDragEnd);
+  window.removeEventListener('pointercancel', onDragEnd);
+}
+
+function onDragEnd() {
+  if (!isDragging.value) return;
+  isDragging.value = false;
+  if (typeof window !== 'undefined') {
+    window.setTimeout(() => {
+      skipSelectionUpdate = false;
+    }, 120);
+  } else {
+    skipSelectionUpdate = false;
+  }
+  detachDragListeners();
+}
+
+function onDragStart(event: PointerEvent) {
+  if (event.button !== undefined && event.button !== 0) return;
+  event.preventDefault();
+  skipSelectionUpdate = true;
+  detachDragListeners();
+  dragOffset.x = event.clientX - pos.x;
+  dragOffset.y = event.clientY - pos.y;
+  isDragging.value = true;
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pointermove', onDragMove);
+    window.addEventListener('pointerup', onDragEnd);
+    window.addEventListener('pointercancel', onDragEnd);
+  }
+}
+
+
+
+const fetchToolbarPresets = async () => {
+
+  if (typeof window === 'undefined') return;
+
   try {
+
+    const res = await fetch(buildApiUrl('/api/toolbar/presets'));
+
+    if (!res.ok) return;
+
+    const data = await res.json();
+
+    const incoming: Preset[] = Array.isArray(data?.presets) ? data.presets.filter((p: any) => p && typeof p.name === 'string' && typeof p.prompt === 'string') : [];
+
+    if (!incoming.length) return;
+
+    const existingNames = new Set(presets.value.map((p) => p.name));
+
+    const merged: Preset[] = [];
+
+    for (const item of incoming) {
+
+      if (!existingNames.has(item.name)) merged.push(item);
+
+    }
+
+    if (merged.length) {
+
+      presets.value = [...merged, ...presets.value];
+
+      if (!selectedPreset.value && !localStorage.getItem(STORAGE_KEY)) {
+
+        selectedPreset.value = merged[0].name;
+
+        prompt.value = merged[0].prompt;
+
+      }
+
+    }
+
+  } catch (error) {
+
+    console.warn('[AiToolbar] 无法获取预设提示词', error);
+
+  }
+
+};
+
+
+
+onMounted(() => {
+
+  mouseDownHandler = (e: MouseEvent) => {
+
+    if (root.value && root.value.contains(e.target as Node)) return;
+
+    visible.value = false;
+
+  };
+
+  mouseUpHandler = (e: MouseEvent) => {
+
+    if (root.value && root.value.contains(e.target as Node)) return;
+
+    window.setTimeout(updateFromSelection, 0);
+
+  };
+
+  document.addEventListener('mousedown', mouseDownHandler, true);
+
+  document.addEventListener('mouseup', mouseUpHandler, true);
+
+
+
+  try {
+
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) presets.value = JSON.parse(raw);
+
+    if (raw) {
+
+      const stored = JSON.parse(raw) as Preset[];
+
+      if (Array.isArray(stored)) {
+
+        presets.value = stored;
+      }
+
+    }
+
   } catch {}
-});
-onBeforeUnmount(() => {
-  if (mouseDownHandler) document.removeEventListener('mousedown', mouseDownHandler, true);
-  if (mouseUpHandler) document.removeEventListener('mouseup', mouseUpHandler, true);
+
+
+
+  fetchToolbarPresets();
+
 });
 
-// TODO: [工作区AI操作集成] 集成工作区操作管理器
-// 当前: 直接调用API进行AI重写
-// 增强: 通过工作区操作管理器进行AI操作，支持键鼠锁定和状态管理
+
+
+onBeforeUnmount(() => {
+
+  if (mouseDownHandler) document.removeEventListener('mousedown', mouseDownHandler, true);
+
+  if (mouseUpHandler) document.removeEventListener('mouseup', mouseUpHandler, true);
+
+  detachDragListeners();
+
+  isDragging.value = false;
+
+});
+
+
+
 const run = async () => {
   const input = props.getSelection();
-  if (!input) return;
+  if (!input || isLoading.value) return;
+
+  const workspaceStore = useWorkspaceStore?.();
+  const canUseWorkspaceOperator = false; // 工具栏改走独立后端，暂不接入工作区调度
+
+  let handledByOperator = false;
 
   try {
-    // 尝试通过工作区操作管理器执行AI操作
-    const workspaceStore = useWorkspaceStore?.()
-    
-    if (workspaceStore) {
-      console.log('[AiToolbar] 通过工作区操作管理器执行AI重写')
-      
-      // 构建AI操作需求
+    isLoading.value = true;
+
+    if (workspaceStore && canUseWorkspaceOperator) {
+      handledByOperator = true;
       const requirement = {
         action: 'edit',
         target: 'selection',
         parameters: {
           prompt: prompt.value,
           preserveFormatting: true,
-          selectedText: input
+          selectedText: input,
         },
-        prompt: `${prompt.value}\n\n选中文本: ${input}`
-      }
-      
-      // 通过工作区管理器添加操作
-      const operator = useWorkspaceOperator()
+        prompt: `${prompt.value}
+
+选中的文本:
+${input}`,
+      };
+
+      const operator = useWorkspaceOperator();
       const operationId = await operator.addOperation({
         type: OperationType.AI_LLM,
-        description: `AI工具栏重写: ${input.substring(0, 50)}...`,
+        description: `AI操作已调度: ${input.substring(0, 32)}...`,
         priority: 1,
         payload: requirement,
         onComplete: (result: any) => {
-          console.log('[AiToolbar] AI重写操作完成:', result)
-          if (result.text) {
-            previewText.value = result.text
-            showPreview.value = true
+          isLoading.value = false;
+          if (result?.text) {
+            previewText.value = result.text;
+            showPreview.value = true;
           }
         },
         onError: (error: Error) => {
-          console.error('[AiToolbar] AI重写操作失败:', error)
-          alert(`AI操作失败: ${error.message}`)
-        }
-      })
-      
-      console.log(`[AiToolbar] AI重写操作已添加到队列，ID: ${operationId}`)
-      return
+          isLoading.value = false;
+          console.error('[AiToolbar] AI操作失败:', error);
+          alert(`AI操作失败: ${error.message}`);
+        },
+      });
+
+      console.log(`[AiToolbar] AI操作已调度: ${operationId}`);
+      return;
     }
-    
-    // 如果工作区管理器不可用，回退到原有实现
-    console.log('[AiToolbar] 工作区管理器不可用，使用原有AI调用方式')
-    await runLegacyAiOperation(input)
-    
+
+    await runLegacyAiOperation(input);
   } catch (e: any) {
     console.error('[AiToolbar] AI操作失败:', e);
     alert(`AI操作失败: ${e.message || e}`);
+  } finally {
+    if (!handledByOperator) isLoading.value = false;
   }
 };
 
-/**
- * 原有的AI操作实现（作为后备）
- */
 const runLegacyAiOperation = async (input: string) => {
-  // Preserve formatting via instruction & examples
+
   const examples = `Examples of formatting to preserve:\n- Bold: **text**\n- Italic: *text*\n- Code: \`code\`\n- Links: [text](url)\n- Images: ![alt](url)\n- Crossref: [~P1] and [~P1]: Definition\n- Headings: #, ##, ### prefixes\n- Lists: -, 1., >, : prefixes\nIf the selection contains formatting markers, keep the structure and only rewrite natural language text.`;
 
-  const combined = `${prompt.value}\n\n${examples}\n\n<selection>\n${input}\n</selection>`;
+
 
   const body = {
-    model: 'o3',
-    input: combined,
-    reasoning: { effort: 'high' },
-    max_output_tokens: 512
+
+    prompt: `${prompt.value}\n\n${examples}`,
+
+    selection: input,
+
+    reasoning_effort: 'medium',
+
+    max_tokens: 512,
+
   };
 
-  const base = (window as any).__NUXT__?.config?.app?.baseURL || '/';
-  const apiURL = (base.endsWith('/') ? base : base + '/') + 'api/ai';
-  let res = await fetch(apiURL, {
+
+
+  const res = await fetch(buildApiUrl('/api/toolbar/rewrite'), {
+
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      // no direct key on client
-    },
-    body: JSON.stringify(body)
+
+    headers: { 'Content-Type': 'application/json' },
+
+    body: JSON.stringify(body),
+
   });
+
   if (!res.ok) {
+
     throw new Error(await res.text());
+
   }
+
   const data = await res.json();
-  // Extract text robustly for Responses API
-  const pickOutputText = (d: any): string => {
-    if (typeof d?.output_text === 'string') return d.output_text;
-    if (typeof d?.text === 'string') return d.text;
-    const arr = Array.isArray(d?.output) ? d.output : [];
-    for (const item of arr) {
-      if (item?.type === 'message' && Array.isArray(item?.content)) {
-        const outTxt = item.content.find((c: any) => c?.type === 'output_text' && typeof c?.text === 'string');
-        if (outTxt) return outTxt.text as string;
-        const anyTxt = item.content.find((c: any) => typeof c?.text === 'string');
-        if (anyTxt) return anyTxt.text as string;
-      }
-    }
-    return '';
-  };
+
   const output = pickOutputText(data);
+
   if (output) {
+
     previewText.value = output;
+
     showPreview.value = true;
+
   }
+
 };
+
+
+
+const pickOutputText = (d: any): string => {
+
+  if (!d) return '';
+
+  if (typeof d.text === 'string') return d.text;
+
+  if (typeof d.output_text === 'string') return d.output_text;
+
+  const arr = Array.isArray(d.output) ? d.output : [];
+
+  for (const item of arr) {
+
+    if (item?.type === 'message' && Array.isArray(item?.content)) {
+
+      const outTxt = item.content.find((c: any) => c?.type === 'output_text' && typeof c?.text === 'string');
+
+      if (outTxt) return outTxt.text as string;
+
+      const anyTxt = item.content.find((c: any) => typeof c?.text === 'string');
+
+      if (anyTxt) return anyTxt.text as string;
+
+    }
+
+  }
+
+  if (typeof d.reply === 'string') return d.reply;
+
+  return '';
+
+};
+
+
+
 watch(selectedPreset, (name) => {
+
   const found = presets.value.find((p) => p.name === name);
-  if (found) prompt.value = found.prompt;
+
+  if (found) {
+
+    prompt.value = found.prompt;
+
+  }
+
 });
 
+
+
 const savePreset = () => {
+
   const name = (newPresetName.value || selectedPreset.value || '').trim();
-  if (!name) return alert('Preset name is required');
+
+  if (!name) {
+
+    alert('请输入预设名称');
+
+    return;
+
+  }
+
   const idx = presets.value.findIndex((p) => p.name === name);
+
   const item = { name, prompt: prompt.value } as Preset;
-  if (idx >= 0) presets.value[idx] = item; else presets.value.push(item);
+
+  if (idx >= 0) presets.value[idx] = item; else presets.value.unshift(item);
+
   localStorage.setItem(STORAGE_KEY, JSON.stringify(presets.value));
+
   selectedPreset.value = name;
+
+  newPresetName.value = '';
+
 };
+
+
 
 const deletePreset = () => {
+
   const name = selectedPreset.value;
+
   if (!name) return;
+
   presets.value = presets.value.filter((p) => p.name !== name);
+
   localStorage.setItem(STORAGE_KEY, JSON.stringify(presets.value));
+
   selectedPreset.value = '';
+
 };
+
+
 
 const copy = async () => {
+
   const input = props.getSelection();
+
   if (!input) return;
-  try { await navigator.clipboard.writeText(input); } catch {}
+
+  try {
+
+    await navigator.clipboard.writeText(input);
+
+  } catch {}
+
 };
+
+
 
 const paste = async () => {
-  // Try Async Clipboard API
+
   try {
+
     const text = await navigator.clipboard.readText();
+
     if (text) return props.applyText(text);
+
   } catch {}
-  // Fallback: prompt-based paste if permission is blocked
-  const text = window.prompt('Paste text here');
+
+  const text = window.prompt('粘贴内容');
+
   if (text != null) props.applyText(text);
+
 };
+
+
 
 const applyPreview = () => {
+
   if (!previewText.value) return;
+
   props.applyText(previewText.value);
+
   showPreview.value = false;
+
   previewText.value = '';
+
   visible.value = false;
+
 };
+
+
 
 const cancelPreview = () => {
+
   showPreview.value = false;
+
   previewText.value = '';
+
 };
+
 </script>
 
+
+
 <style scoped>
+
 .ai-toolbar {
-  transform: translateY(-8px) scale(0.98);
+  transform: translateY(-10px);
   opacity: 0.98;
-  border-radius: 12px;
+  min-width: 16rem;
 }
-.ai-toolbar::after {
-  content: "";
-  position: absolute;
-  left: 16px;
-  bottom: -6px;
-  width: 10px;
-  height: 10px;
-  background: inherit;
-  border-left: 1px solid var(--un-c-border, #cbd5e1);
-  border-bottom: 1px solid var(--un-c-border, #cbd5e1);
-  transform: rotate(45deg);
+
+.ai-toolbar.is-dragging {
+  cursor: grabbing;
 }
-.round-btn {
-  padding: 2px 8px;
-  border: 1px solid var(--un-c-border, #cbd5e1);
-  border-radius: 8px;
+
+.ai-toolbar.is-dragging .toolbar-header {
+  cursor: grabbing;
 }
-select, input, textarea {
-  outline: none;
+
+.toolbar-shell {
+  @apply bg-c dark:bg-dark-c border border-c/50 dark:border-dark-c/60 rounded-2xl shadow-2xl px-4 py-3 text-xs text-dark-c space-y-3 dark:text-light-c;
 }
+
+.toolbar-header {
+  @apply flex items-start justify-between gap-3 cursor-move select-none;
+  touch-action: none;
+}
+
+
+
+.header-info {
+
+  @apply flex items-start gap-2;
+
+}
+
+
+
+.title {
+  @apply text-sm font-semibold text-dark-c dark:text-light-c;
+}
+
+.subtitle {
+  @apply text-xs text-dark-c/70 dark:text-light-c/70;
+}
+
+
+
+.toolbar-actions {
+
+  @apply flex items-center gap-2 flex-wrap;
+
+}
+
+
+
+.toolbar-icon-btn {
+  @apply flex items-center gap-1 px-3 py-1.5 rounded-lg border border-c/50 bg-c text-dark-c hover:bg-brand/10 hover:text-brand transition-colors disabled:opacity-40 disabled:cursor-not-allowed dark:bg-dark-c dark:border-dark-c/60 dark:text-light-c/80;
+}
+
+.toolbar-primary {
+  @apply px-3.5 py-1.5 rounded-lg bg-brand text-white font-medium text-xs shadow-md hover:shadow-lg transition-transform hover:-translate-y-0.5;
+}
+
+.toolbar-primary.loading {
+  @apply pointer-events-none opacity-80;
+}
+
+.toolbar-primary.loading span {
+  @apply flex items-center gap-1;
+}
+
+
+.toolbar-panel {
+
+  @apply space-y-2;
+
+}
+
+
+
+.preset-row {
+
+  @apply flex items-center gap-2 flex-wrap;
+
+}
+
+
+
+.preset-label {
+  @apply text-[11px] uppercase tracking-wide text-dark-c/60 dark:text-light-c/60;
+}
+
+
+
+.preset-select,
+.preset-input {
+  @apply border border-c/50 rounded-lg bg-c px-3 py-1.5 text-xs text-dark-c outline-none focus:border-brand/60 focus:ring-1 focus:ring-brand/40 transition-colors dark:bg-dark-c dark:border-dark-c/60 dark:text-light-c/90;
+}
+
+.prompt-area {
+  @apply w-full h-24 rounded-xl border border-c/50 bg-c px-3 py-2 text-xs leading-5 text-dark-c outline-none focus:border-brand/60 focus:ring-1 focus:ring-brand/40 transition dark:bg-dark-c dark:border-dark-c/60 dark:text-light-c/90;
+}
+
+.preview-bubble {
+  @apply absolute left-4 top-full mt-3 w-96 max-w-[80vw] bg-c border border-c/50 rounded-2xl shadow-2xl p-3 space-y-2 text-xs text-dark-c dark:bg-dark-c dark:border-dark-c/60 dark:text-light-c/90;
+}
+
+.preview-header {
+  @apply flex items-center gap-2 text-dark-c dark:text-light-c;
+}
+
+.preview-content {
+  @apply border border-c/30 rounded-xl bg-c p-3 max-h-48 overflow-auto whitespace-pre-wrap text-dark-c dark:bg-dark-c/40 dark:text-light-c/90;
+}
+
+.preview-actions {
+
+  @apply flex items-center gap-2;
+
+}
+
+
+
+.fade-enter-active,
+
+.fade-leave-active {
+
+  transition: opacity 0.18s ease;
+
+}
+
+
+
+.fade-enter-from,
+
+.fade-leave-to {
+
+  opacity: 0;
+
+}
+
 </style>
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
