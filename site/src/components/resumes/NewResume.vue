@@ -42,20 +42,85 @@
             </div>
           </div>
 
-          <div v-if="curDoc === 'ps'" class="mt-4 space-y-2">
-            <div text-sm text-light-c>PS 预置信息</div>
-            <div class="grid grid-cols-2 gap-3">
-              <input v-model.trim="projectInfo" class="px-3 py-2 rounded border border-c bg-transparent" placeholder="Project info (optional)" />
-              <input v-model.trim="studentInfo" class="px-3 py-2 rounded border border-c bg-transparent" placeholder="Student info (optional)" />
+          <div v-if="curDoc === 'ps'" class="mt-4 space-y-3">
+            <div class="rounded-lg border border-c bg-dark-c p-4 space-y-3">
+              <div class="flex items-center justify-between text-sm font-medium text-light-c">
+                <span>PS 预置信息</span>
+                <span class="text-xs text-light-c opacity-70">可选</span>
+              </div>
+              <div class="grid gap-3 md:grid-cols-2">
+                <div class="space-y-1">
+                  <label class="block text-xs text-light-c opacity-70">项目背景</label>
+                  <input
+                    v-model.trim="projectInfo"
+                    class="w-full px-3 py-2 rounded border border-c bg-transparent outline-none focus:border-brand transition"
+                    placeholder="Project info (optional)"
+                  />
+                </div>
+                <div class="space-y-1">
+                  <label class="block text-xs text-light-c opacity-70">学生亮点</label>
+                  <input
+                    v-model.trim="studentInfo"
+                    class="w-full px-3 py-2 rounded border border-c bg-transparent outline-none focus:border-brand transition"
+                    placeholder="Student info (optional)"
+                  />
+                </div>
+              </div>
             </div>
-            <div class="space-y-1">
-              <label class="text-xs text-light-c">上传 PDF（{{ psCfg.requireUpload ? '必需' : '可选' }}）</label>
-              <input type="file" :accept="acceptedTypes" @change="onPdfSelect" />
-              <div v-if="pdfName" class="text-xs text-light-c">已选择：{{ pdfName }}</div>
+
+            <div class="rounded-lg border border-c bg-dark-c p-4 space-y-3">
+              <div class="flex items-center justify-between text-sm font-medium text-light-c">
+                <span>上传素材（可选）</span>
+                <span class="text-xs text-light-c opacity-70">支持 PDF / MD / TXT / DOC / DOCX</span>
+              </div>
+              <input ref="uploadInputRef" type="file" class="hidden" :accept="acceptedTypes" @change="onUploadSelect" />
+              <div class="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-2 rounded border border-dashed border-c px-3 py-2 text-sm text-light-c hover:border-brand hover:text-brand transition"
+                  @click="openUploadPicker"
+                >
+                  <span i-mdi:tray-arrow-up />
+                  <span>选择文件</span>
+                </button>
+                <button
+                  v-if="uploadFile"
+                  type="button"
+                  class="text-xs text-light-c opacity-80 hover:text-red-400 transition"
+                  @click="clearUpload"
+                >移除</button>
+              </div>
+              <div v-if="uploadFile" class="flex items-center gap-2 rounded bg-darker-c px-3 py-2 text-xs text-light-c">
+                <span i-mdi:file-document-outline />
+                <span class="truncate">{{ uploadFile.name }}</span>
+                <span v-if="uploadFileSummary" class="opacity-70">· {{ uploadFileSummary }}</span>
+              </div>
+              <div v-if="uploadParsing" class="text-xs text-brand animate-pulse">正在解析文件...</div>
             </div>
-            <div class="flex justify-end gap-2 pt-2 border-t border-c">
-              <button class="px-3 py-1 rounded bg-gray-200 dark:bg-gray-600" @click="resetDialog">取消</button>
-              <button class="px-3 py-1 rounded bg-blue-600 text-white hover:opacity-90" :disabled="!canConfirm" @click="confirmCreate">确定</button>
+
+            <div class="rounded-lg border border-c bg-dark-c p-4 space-y-2">
+              <div class="text-sm font-medium text-light-c">或输入初始信息</div>
+              <textarea
+                v-model="initialText"
+                class="w-full min-h-[120px] resize-y rounded border border-c bg-transparent px-3 py-2 text-sm text-light-c focus:border-brand focus:outline-none transition"
+                placeholder="粘贴初始素材、写作要求或其他背景信息（可选）"
+              />
+              <div class="text-xs text-light-c opacity-70">文字会与上传文件共同用于生成首稿，可单独使用。</div>
+            </div>
+
+            <div class="flex justify-end gap-2 border-t border-c pt-3">
+              <button
+                class="px-3 py-1.5 rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition dark:bg-gray-600 dark:text-white/90"
+                @click="resetDialog"
+              >取消</button>
+              <button
+                class="px-3 py-1.5 rounded bg-blue-600 text-white hover:opacity-90 disabled:opacity-40 flex items-center gap-2 transition"
+                :disabled="!canConfirm || psSubmitting"
+                @click="confirmCreate"
+              >
+                <span v-if="psSubmitting" class="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                <span>确定</span>
+              </button>
             </div>
           </div>
           <div v-if="curDoc === 'rec'" class="mt-4 space-y-2">
@@ -82,9 +147,24 @@ const runtimeConfig = useRuntimeConfig()
 const backendBase = computed(() => String((runtimeConfig.public as any)?.backendBase || '').replace(/\/$/, ''))
 const psCfg = computed(() => (runtimeConfig.public as any)?.ps || { requireUpload: false, allowedUploadTypes: ["application/pdf"] })
 const recCfg = computed(() => (runtimeConfig.public as any)?.rec || { requireUpload: true, allowedUploadTypes: ["application/pdf"] })
-const acceptedTypes = computed(() => Array.isArray(psCfg.value.allowedUploadTypes) && psCfg.value.allowedUploadTypes.length > 0
-  ? psCfg.value.allowedUploadTypes.join(',')
-  : 'application/pdf')
+const psAllowedTypes = computed(() => {
+  const list = Array.isArray(psCfg.value.allowedUploadTypes) && psCfg.value.allowedUploadTypes.length > 0
+    ? psCfg.value.allowedUploadTypes
+    : ['application/pdf']
+  const normalized = list.map(t => String(t).toLowerCase())
+  if (!normalized.includes('application/pdf')) normalized.push('application/pdf')
+  if (!normalized.includes('.pdf')) normalized.push('.pdf')
+  return Array.from(new Set(normalized))
+})
+const acceptedTypes = computed(() => psAllowedTypes.value.join(','))
+const uploadFileSummary = computed(() => {
+  if (!uploadFile.value) return ''
+  const parts: string[] = []
+  const ext = uploadFile.value.ext ? uploadFile.value.ext.toUpperCase() : ''
+  if (ext) parts.push(ext)
+  if (uploadFile.value.size) parts.push(formatBytes(uploadFile.value.size))
+  return parts.join(' · ')
+})
 const acceptedRecTypes = computed(() => {
   const types = Array.isArray(recCfg.value.allowedUploadTypes) && recCfg.value.allowedUploadTypes.length > 0
     ? recCfg.value.allowedUploadTypes.join(',')
@@ -101,6 +181,14 @@ const toast = useToast();
 
 type Doc = 'cv' | 'ps' | 'rec';
 type Lang = 'en' | 'zh';
+type UploadPayload = {
+  name: string
+  mime: string
+  ext: string
+  size: number
+  base64?: string
+  text?: string
+}
 
 const step = ref<'doc' | 'lang'>('doc');
 const curDoc = ref<Doc>('cv');
@@ -108,8 +196,11 @@ const lang = ref<Lang | null>(null)
 
 const projectInfo = ref("")
 const studentInfo = ref("")
-const pdfBase64 = ref<string | null>(null)
-const pdfName = ref<string>("")
+const initialText = ref("")
+const uploadInputRef = ref<HTMLInputElement | null>(null)
+const uploadFile = ref<UploadPayload | null>(null)
+const uploadParsing = ref(false)
+const psSubmitting = ref(false)
 const recBase64 = ref<string | null>(null)
 const recName = ref<string>("")
 const recSubmitting = ref<boolean>(false)
@@ -118,7 +209,12 @@ const setLang = (l: Lang) => { lang.value = l }
 const canConfirm = computed(() => {
   if (curDoc.value === 'ps') {
     if (!lang.value) return false
-    if (psCfg.value.requireUpload && !pdfBase64.value) return false
+    if (uploadParsing.value) return false
+    if (psCfg.value.requireUpload) {
+      const hasFile = !!uploadFile.value
+      const hasText = Boolean(initialText.value.trim())
+      if (!hasFile && !hasText) return false
+    }
     return true
   }
   if (curDoc.value === 'rec') {
@@ -135,33 +231,85 @@ const resetDialog = () => {
   lang.value = null
   projectInfo.value = ''
   studentInfo.value = ''
-  pdfBase64.value = null
+  initialText.value = ''
+  uploadFile.value = null
+  uploadParsing.value = false
+  psSubmitting.value = false
+  if (uploadInputRef.value) uploadInputRef.value.value = ''
   recBase64.value = null
+  recName.value = ''
 }
 
-const onPdfSelect = async (e: Event) => {
+const openUploadPicker = () => {
+  if (psSubmitting.value || uploadParsing.value) return
+  uploadInputRef.value?.click()
+}
+
+const clearUpload = () => {
+  uploadFile.value = null
+  if (uploadInputRef.value) uploadInputRef.value.value = ''
+}
+
+const isPsFileAllowed = (file: File): boolean => {
+  const allowed = psAllowedTypes.value
+  if (!allowed.length) return true
+  const mime = (file.type || '').toLowerCase()
+  const ext = `.${(file.name?.split('.')?.pop() || '').toLowerCase()}`
+  if (mime && allowed.includes(mime)) return true
+  if (ext && allowed.includes(ext)) return true
+  if (ext === '.pdf' || mime === 'application/pdf') return true
+  if (ext === '.md' && allowed.includes('text/markdown')) return true
+  if (ext === '.txt' && allowed.includes('text/plain')) return true
+  if (ext === '.docx' && allowed.includes('application/vnd.openxmlformats-officedocument.wordprocessingml.document')) return true
+  if (ext === '.doc' && allowed.includes('application/msword')) return true
+  return false
+}
+
+const onUploadSelect = async (e: Event) => {
   const input = e.target as HTMLInputElement
   const file = input?.files?.[0]
   if (!file) return
-  // Validate type by config
+  uploadParsing.value = true
   try {
-    const okTypes = (psCfg.value.allowedUploadTypes as string[]) || []
-    if (okTypes.length > 0 && !okTypes.includes(file.type)) {
-      pdfBase64.value = null
-      pdfName.value = ''
+    if (!isPsFileAllowed(file)) {
+      uploadFile.value = null
       ;(toast as any).import(false)
       return
     }
-  } catch {}
-  pdfName.value = file.name || 'attachment.pdf'
-  // Use FileReader to avoid huge argument spreading causing stack overflow
-  const reader = new FileReader()
-  reader.onload = () => {
-    const res = typeof reader.result === 'string' ? reader.result : ''
-    const comma = res.indexOf(',')
-    pdfBase64.value = comma >= 0 ? res.slice(comma + 1) : res
+    const name = file.name || 'attachment'
+    const lowerMime = (file.type || '').toLowerCase()
+    const lowerExt = (name.split('.').pop() || '').toLowerCase()
+    const baseInfo: UploadPayload = { name, mime: lowerMime || '', ext: lowerExt, size: file.size }
+
+    if (lowerExt === 'pdf' || lowerMime === 'application/pdf') {
+      const dataUrl = await readFileAsDataUrl(file)
+      uploadFile.value = { ...baseInfo, mime: 'application/pdf', ext: 'pdf', base64: extractBase64(dataUrl) }
+    } else if (['md', 'markdown'].includes(lowerExt) || lowerMime === 'text/markdown') {
+      const text = await readFileAsText(file)
+      uploadFile.value = { ...baseInfo, ext: 'md', text }
+    } else if (lowerExt === 'txt' || lowerMime === 'text/plain') {
+      const text = await readFileAsText(file)
+      uploadFile.value = { ...baseInfo, ext: 'txt', text }
+    } else if (lowerExt === 'docx' || lowerMime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      const buffer = await readFileAsArrayBuffer(file)
+      const text = await convertDocxBufferToText(buffer)
+      uploadFile.value = { ...baseInfo, ext: 'docx', text, base64: arrayBufferToBase64(buffer) }
+    } else if (lowerExt === 'doc' || lowerMime === 'application/msword') {
+      const dataUrl = await readFileAsDataUrl(file)
+      uploadFile.value = { ...baseInfo, ext: 'doc', base64: extractBase64(dataUrl) }
+    } else {
+      const dataUrl = await readFileAsDataUrl(file)
+      uploadFile.value = { ...baseInfo, base64: extractBase64(dataUrl) }
+    }
+    ;(toast as any).import(true)
+  } catch (error) {
+    console.error('[PS Upload] failed to process file', error)
+    uploadFile.value = null
+    ;(toast as any).import(false)
+  } finally {
+    uploadParsing.value = false
+    if (input) input.value = ''
   }
-  reader.readAsDataURL(file)
 }
 
 const createBy = async (docType: Doc, lang: Lang) => {
@@ -197,97 +345,279 @@ const createBy = async (docType: Doc, lang: Lang) => {
 
 const confirmCreate = async () => {
   if (curDoc.value !== 'ps' || !lang.value) return
-  // Create two docs: outline and body, share chatId
-  const chatId = `chat_${Date.now().toString(36)}`
-  const outlineId = await newResume(buildPsTemplateKey(lang.value, 'outline'))
-  const bodyId = await newResume(buildPsTemplateKey(lang.value, 'body'))
-
-  const { setPsMetaForPair } = await import('~/utils/ps')
-  setPsMetaForPair({ outlineId, bodyId, chatId })
+  if (psSubmitting.value) return
+  psSubmitting.value = true
+  let outlineId: string | null = null
 
   try {
-    const { convStore } = await import('~/data/contextStore')
-    const seed = [
-      projectInfo.value ? `Project: ${projectInfo.value}` : '',
-      studentInfo.value ? `Student: ${studentInfo.value}` : ''
-    ].filter(Boolean).join('\n')
-    if (seed) convStore.appendMessage(chatId, 'user', seed)
-  } catch {}
+    const chatId = `chat_${Date.now().toString(36)}`
+    outlineId = await newResume(buildPsTemplateKey(lang.value, 'outline'))
+    const bodyId = await newResume(buildPsTemplateKey(lang.value, 'body'))
 
-  try {
-    if (pdfBase64.value) {
-      // Parse PDF to text locally (reuse Import pipeline) then call PS seed endpoint
+    const { setPsMetaForPair } = await import('~/utils/ps')
+    setPsMetaForPair({ outlineId, bodyId, chatId })
+
+    try {
+      const { convStore } = await import('~/data/contextStore')
+      const prelim: string[] = []
+      if (projectInfo.value) prelim.push(`Project: ${projectInfo.value}`)
+      if (studentInfo.value) prelim.push(`Student: ${studentInfo.value}`)
+      if (prelim.length) convStore.appendMessage(chatId, 'user', prelim.join('\n'))
+      if (initialText.value.trim()) convStore.appendMessage(chatId, 'user', initialText.value.trim())
+    } catch (err) {
+      console.warn('[PS Seed] failed to preload chat context', err)
+    }
+
+    let extracted = ''
+    if (uploadFile.value) {
       try {
-        const buf = Uint8Array.from(atob(pdfBase64.value), c => c.charCodeAt(0))
-        const pdfjsLib: any = await import('pdfjs-dist')
-        try {
-          const workerUrl = (await import('pdfjs-dist/build/pdf.worker.mjs?url')).default as string
-          if ((pdfjsLib as any)?.GlobalWorkerOptions) {
-            const worker = new Worker(workerUrl, { type: 'module' })
-            ;(pdfjsLib as any).GlobalWorkerOptions.workerPort = worker
-          }
-        } catch {}
-        const task = (pdfjsLib as any).getDocument({ data: buf })
-        const pdf = await task.promise
-        let fullText = ''
-        for (let p = 1; p <= pdf.numPages; p++) {
-          const page = await pdf.getPage(p)
-          const tc = await page.getTextContent()
-          const items = (tc.items || []) as any[]
-          const lineBuckets = new Map<number, Array<{ x: number; str: string }>>()
-          const yTolerance = 2
-          for (const it of items) {
-            const tr = it.transform || [0,0,0,0,0,0]
-            const x = tr[4] || 0
-            const y = tr[5] || 0
-            const yKey = Math.round(y / yTolerance) * yTolerance
-            if (!lineBuckets.has(yKey)) lineBuckets.set(yKey, [])
-            lineBuckets.get(yKey)!.push({ x, str: String(it.str || '') })
-          }
-          const yKeys = Array.from(lineBuckets.keys()).sort((a, b) => b - a)
-          const lines: string[] = []
-          for (const y of yKeys) {
-            const line = lineBuckets.get(y)!
-            line.sort((a, b) => a.x - b.x)
-            let bufLine = ''
-            for (let i = 0; i < line.length; i++) {
-              const cur = line[i]
-              const prev = line[i - 1]
-              const gap = prev ? cur.x - prev.x : 0
-              bufLine += (prev && gap > 6 ? ' ' : '') + cur.str
-            }
-            lines.push(bufLine.trim())
-          }
-          const pageText = lines.join('\n')
-          fullText += (p > 1 ? '\n\n' : '') + pageText
-        }
-        // Call backend to prepare PS suggestions
+        extracted = await extractTextFromFile()
+      } catch (err) {
+        console.error('[PS Upload] failed to extract content', err)
+        extracted = ''
+      }
+    }
+
+    const manual = initialText.value.trim()
+    const uploadText = [extracted, manual].filter(Boolean).join('\n\n').trim()
+
+    if (uploadText) {
+      try {
         const seed: any = await $fetch('/api/ps/seed-from-upload', {
           method: 'POST',
           body: {
             chatId,
             language: lang.value,
-            uploadText: fullText,
+            uploadText,
             projectInfo: projectInfo.value,
             studentInfo: studentInfo.value
           }
         })
         if (seed && seed.status === 'ok') {
-          try {
-            const key = `ps_seed_${chatId}`
-            localStorage.setItem(key, JSON.stringify(seed.data))
-          } catch {}
+          try { localStorage.setItem(`ps_seed_${chatId}`, JSON.stringify(seed.data)) } catch {}
+          try { (toast as any).import(true) } catch {}
+        } else {
+          try { (toast as any).import(false) } catch {}
         }
-        try { (toast as any).import(true) } catch {}
-      } catch (e) {
+      } catch (err) {
+        console.error('[PS Seed] request failed', err)
         try { (toast as any).import(false) } catch {}
       }
     }
-  } catch (e) {
+  } catch (error) {
+    console.error('[PS Create] failed to initialize document', error)
     try { (toast as any).import(false) } catch {}
+  } finally {
+    psSubmitting.value = false
   }
 
-  router.push(localePath(`/edit/${outlineId}`));
+  if (outlineId) router.push(localePath(`/edit/${outlineId}`))
+}
+
+const readFileAsDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+  reader.onerror = () => reject(reader.error)
+  reader.readAsDataURL(file)
+})
+
+const readFileAsText = (file: File): Promise<string> => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+  reader.onerror = () => reject(reader.error)
+  reader.readAsText(file)
+})
+
+const readFileAsArrayBuffer = (file: File): Promise<ArrayBuffer> => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => {
+    if (reader.result instanceof ArrayBuffer) resolve(reader.result)
+    else reject(new Error('Unexpected reader result'))
+  }
+  reader.onerror = () => reject(reader.error)
+  reader.readAsArrayBuffer(file)
+})
+
+const extractBase64 = (dataUrl: string): string => {
+  const comma = dataUrl.indexOf(',')
+  return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
+}
+
+const formatBytes = (bytes: number): string => {
+  if (!bytes) return ''
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)}${units[unitIndex]}`
+}
+
+const getBuffer = (): any => (typeof globalThis !== 'undefined' ? (globalThis as any).Buffer : undefined)
+
+const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+  const BufferImpl = getBuffer()
+  if (typeof window === 'undefined' && BufferImpl) {
+    return BufferImpl.from(buffer).toString('base64')
+  }
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
+  if (typeof btoa === 'function') return btoa(binary)
+  return BufferImpl ? BufferImpl.from(binary, 'binary').toString('base64') : ''
+}
+
+const base64ToUint8Array = (b64: string): Uint8Array => {
+  const BufferImpl = getBuffer()
+  if (typeof window === 'undefined' && BufferImpl) {
+    return Uint8Array.from(BufferImpl.from(b64, 'base64'))
+  }
+  const binary = typeof atob === 'function' ? atob(b64) : BufferImpl ? BufferImpl.from(b64, 'base64').toString('binary') : ''
+  const len = binary.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+const base64ToArrayBuffer = (b64: string): ArrayBuffer => base64ToUint8Array(b64).buffer
+
+const decodeBase64ToUtf8 = (b64: string): string => {
+  try {
+    const BufferImpl = getBuffer()
+    if (typeof window === 'undefined' && BufferImpl) {
+      return BufferImpl.from(b64, 'base64').toString('utf-8')
+    }
+    const bytes = base64ToUint8Array(b64)
+    return new TextDecoder().decode(bytes)
+  } catch {
+    return ''
+  }
+}
+
+const normalizeText = (text: string): string => text
+  .replace(/\u00a0/g, ' ')
+  .replace(/\r/g, '')
+  .replace(/[ \t]+\n/g, '\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim()
+
+const htmlToPlainText = (html: string): string => {
+  if (!html) return ''
+  if (typeof window !== 'undefined' && typeof DOMParser !== 'undefined') {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(html, 'text/html')
+    return normalizeText((doc.body?.textContent || '').trim())
+  }
+  return normalizeText(html.replace(/<[^>]+>/g, ' '))
+}
+
+const convertDocxBufferToText = async (buffer: ArrayBuffer): Promise<string> => {
+  try {
+    const mammothMod: any = await import(/* @vite-ignore */ 'mammoth/mammoth.browser')
+    const mammothLib: any = (mammothMod && (mammothMod as any).default)
+      || (typeof window !== 'undefined' ? (window as any).mammoth : null)
+      || mammothMod
+    const result = await mammothLib.convertToHtml({ arrayBuffer: buffer })
+    const html = result?.value || ''
+    return htmlToPlainText(html)
+  } catch (error) {
+    console.warn('[PS Upload] DOCX parse failed via mammoth', error)
+    return ''
+  }
+}
+
+const extractTextFromPdfBase64 = async (b64: string): Promise<string> => {
+  const data = base64ToUint8Array(b64)
+  const pdfjsLib: any = await import('pdfjs-dist')
+  try {
+    const workerUrl = (await import('pdfjs-dist/build/pdf.worker.mjs?url')).default as string
+    if ((pdfjsLib as any)?.GlobalWorkerOptions && typeof window !== 'undefined' && typeof Worker !== 'undefined') {
+      const worker = new Worker(workerUrl, { type: 'module' })
+      ;(pdfjsLib as any).GlobalWorkerOptions.workerPort = worker
+    }
+  } catch (err) {
+    console.warn('[PS Upload] unable to initialize dedicated PDF worker', err)
+  }
+  const task = (pdfjsLib as any).getDocument({ data })
+  const pdf = await task.promise
+  let fullText = ''
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p)
+    const tc = await page.getTextContent()
+    const items = (tc.items || []) as any[]
+    const lineBuckets = new Map<number, Array<{ x: number; str: string }>>()
+    const yTolerance = 2
+    for (const it of items) {
+      const tr = it.transform || [0, 0, 0, 0, 0, 0]
+      const x = tr[4] || 0
+      const y = tr[5] || 0
+      const yKey = Math.round(y / yTolerance) * yTolerance
+      if (!lineBuckets.has(yKey)) lineBuckets.set(yKey, [])
+      lineBuckets.get(yKey)!.push({ x, str: String(it.str || '') })
+    }
+    const yKeys = Array.from(lineBuckets.keys()).sort((a, b) => b - a)
+    const lines: string[] = []
+    for (const y of yKeys) {
+      const line = lineBuckets.get(y)!
+      line.sort((a, b) => a.x - b.x)
+      let buf = ''
+      for (let i = 0; i < line.length; i++) {
+        const cur = line[i]
+        const prev = line[i - 1]
+        const gap = prev ? cur.x - prev.x : 0
+        buf += (prev && gap > 6 ? ' ' : '') + cur.str
+      }
+      lines.push(buf.trim())
+    }
+    const pageText = lines.join('\n')
+    fullText += (p > 1 ? '\n\n' : '') + pageText
+  }
+  return normalizeText(fullText)
+}
+
+const extractViaBackend = async (payload: UploadPayload): Promise<string> => {
+  const url = backendBase.value ? `${backendBase.value}/api/files/extract-text` : '/api/files/extract-text'
+  const res: any = await $fetch(url, {
+    method: 'POST',
+    body: {
+      name: payload.name,
+      contentBase64: payload.base64,
+      language: lang.value,
+      contentType: payload.mime
+    }
+  })
+  if (res?.ok && typeof res.text === 'string') return normalizeText(res.text)
+  throw new Error('extract_text_failed')
+}
+
+const extractTextFromFile = async (): Promise<string> => {
+  const info = uploadFile.value
+  if (!info) return ''
+
+  if (info.text && info.text.trim()) return normalizeText(info.text)
+
+  if (info.base64) {
+    if (info.ext === 'pdf') {
+      return await extractTextFromPdfBase64(info.base64)
+    }
+    if (info.ext === 'doc') {
+      return await extractViaBackend(info)
+    }
+    if (info.ext === 'docx') {
+      const buffer = base64ToArrayBuffer(info.base64)
+      const text = await convertDocxBufferToText(buffer)
+      if (text) return normalizeText(text)
+      return await extractViaBackend(info)
+    }
+    if (['md', 'markdown', 'txt'].includes(info.ext)) {
+      return normalizeText(decodeBase64ToUtf8(info.base64))
+    }
+    return normalizeText(decodeBase64ToUtf8(info.base64))
+  }
+
+  return ''
 }
 
 const onRecSelect = async (e: Event) => {
@@ -320,12 +650,20 @@ const safeString = (v: any): string => {
   if (typeof v === 'string') return v
   try { return JSON.stringify(v, null, 2) } catch { return String(v) }
 }
+const parseMaybeJson = (raw: any): any => {
+  if (typeof raw !== 'string') return raw
+  const trimmed = raw.trim()
+  if (!trimmed) return raw
+  if (!/^[\[{]/.test(trimmed)) return raw
+  try { return JSON.parse(trimmed) } catch { return raw }
+}
 const formatMaterial = (material: any): string => {
   if (!material) return ''
-  if (typeof material === 'string') return material.trim()
+  const source = parseMaybeJson(material)
+  if (typeof source === 'string') return source.trim()
   try {
-    const stories = Array.isArray(material?.stories) ? material.stories : []
-    if (!stories.length) return safeString(material)
+    const stories = Array.isArray(source?.stories) ? source.stories : []
+    if (!stories.length) return safeString(source)
     const blocks: string[] = []
     stories.forEach((s: any, idx: number) => {
       const title = s?.title ? String(s.title) : `Story ${idx + 1}`
@@ -344,18 +682,19 @@ const formatMaterial = (material: any): string => {
     })
     return blocks.join('\n\n')
   } catch {
-    return safeString(material)
+    return safeString(source)
   }
 }
 const formatOutline = (outline: any): string => {
   if (!outline) return ''
-  if (typeof outline === 'string') return outline.trim()
+  const source = parseMaybeJson(outline)
+  if (typeof source === 'string') return source.trim()
   try {
     const lines: string[] = []
-    const opening = outline?.opening || outline?.intro || ''
+    const opening = source?.opening || source?.intro || ''
     if (opening) { lines.push('Opening:'); lines.push(String(opening)) }
-    const bps = Array.isArray(outline?.body_paragraphs || outline?.body)
-      ? (outline.body_paragraphs || outline.body)
+    const bps = Array.isArray(source?.body_paragraphs || source?.body)
+      ? (source.body_paragraphs || source.body)
       : []
     bps.forEach((bp: any, i: number) => {
       if (typeof bp === 'string') {
@@ -368,19 +707,20 @@ const formatOutline = (outline: any): string => {
         if (content) lines.push(String(content))
       }
     })
-    const closing = outline?.closing || outline?.conclusion || outline?.outro || ''
+    const closing = source?.closing || source?.conclusion || source?.outro || ''
     if (closing) { lines.push('Closing:'); lines.push(String(closing)) }
     return lines.join('\n')
   } catch {
-    return safeString(outline)
+    return safeString(source)
   }
 }
 const formatChecks = (checks: any): string => {
   if (!checks) return ''
-  if (typeof checks === 'string') return checks.trim()
-  if (isPlainObject(checks)) {
+  const source = parseMaybeJson(checks)
+  if (typeof source === 'string') return source.trim()
+  if (isPlainObject(source)) {
     const lines: string[] = []
-    const entries = Object.entries(checks as Record<string, any>)
+    const entries = Object.entries(source as Record<string, any>)
     const valuesAreArrays = entries.every(([, v]) => Array.isArray(v))
     if (valuesAreArrays) {
       for (const [k, arr] of entries) {
@@ -399,8 +739,8 @@ const formatChecks = (checks: any): string => {
       return lines.join('\n')
     }
   }
-  if (Array.isArray(checks)) return checks.map((x: any) => `- ${safeString(x)}`).join('\n')
-  return safeString(checks)
+  if (Array.isArray(source)) return source.map((x: any) => `- ${safeString(x)}`).join('\n')
+  return safeString(source)
 }
 
 const confirmCreateRec = async () => {
@@ -438,10 +778,10 @@ const confirmCreateRec = async () => {
       if (typeof r === 'string') return r
       if (r && typeof r === 'object') {
         const en = String(
-          r.letter_en || r.recommendation_en || r.english || r.en || ''
+          r.letter_en || r.recommendation_en || r.english_letter || r.english_text || r.english || r.en || ''
         )
         const zh = String(
-          r.letter_zh || r.recommendation_zh || r.chinese || r.zh || r.zh_cn || r.cn || ''
+          r.letter_zh || r.recommendation_zh || r.chinese_translation || r.chinese_letter || r.chinese || r.zh || r.zh_cn || r.cn || ''
         )
         if (en && zh) return en + '\n\n' + zh
         if (en || zh) return en || zh

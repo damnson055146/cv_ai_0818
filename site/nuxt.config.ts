@@ -111,12 +111,32 @@ export default defineNuxtConfig({
       },
       // PS creation behavior flags (controlled in config file)
       ps: {
-        requireUpload: true,
-        allowedUploadTypes: ["application/pdf"]
+        requireUpload: false,
+        allowedUploadTypes: [
+          "application/pdf",
+          "text/plain",
+          "text/markdown",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          ".md",
+          ".txt",
+          ".doc",
+          ".docx"
+        ]
       },
       rec: {
         requireUpload: true,
-        allowedUploadTypes: ["application/pdf"]
+        allowedUploadTypes: [
+          "application/pdf",
+          "text/plain",
+          "text/markdown",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          ".md",
+          ".txt",
+          ".doc",
+          ".docx"
+        ]
       }
     }
   },

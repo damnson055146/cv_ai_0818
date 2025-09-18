@@ -216,6 +216,53 @@ def get_openai_key() -> str:
     return key
 
 
+async def upload_base64_to_openai_file(
+    name: str,
+    b64: str,
+    purpose: str,
+    api_key: str,
+    content_type: str | None = None,
+) -> dict:
+    if not b64:
+        raise HTTPException(status_code=400, detail="contentBase64 is required")
+
+    import base64
+
+    payload = b64.strip()
+    if "," in payload and payload.startswith("data:"):
+        header, payload = payload.split(",", 1)
+        if not content_type:
+            try:
+                content_type = header.split(":", 1)[1].split(";", 1)[0]
+            except Exception:
+                content_type = None
+    try:
+        file_bytes = base64.b64decode(payload, validate=True)
+    except Exception:
+        padded = payload + ("=" * (-len(payload) % 4))
+        try:
+            file_bytes = base64.urlsafe_b64decode(padded)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid base64 content") from exc
+
+    files = {
+        "file": (name, file_bytes, content_type or "application/octet-stream"),
+        "purpose": (None, purpose or "user_data"),
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(
+            "https://api.openai.com/v1/files",
+            headers={"Authorization": f"Bearer {api_key}"},
+            files=files,
+        )
+
+    resp_ct = r.headers.get("content-type", "")
+    data = r.json() if "application/json" in resp_ct else {"text": r.text}
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code, detail=data)
+    return data
+
+
 def build_responses_input(
     messages: list[dict] | None = None,
     system_text: str | None = None,
@@ -511,6 +558,8 @@ async def rec_create(req: Request):
                 en = (
                     res_field.get("letter_en")
                     or res_field.get("recommendation_en")
+                    or res_field.get("english_letter")
+                    or res_field.get("english_text")
                     or res_field.get("english")
                     or res_field.get("en")
                     or ""
@@ -518,6 +567,8 @@ async def rec_create(req: Request):
                 zh = (
                     res_field.get("letter_zh")
                     or res_field.get("recommendation_zh")
+                    or res_field.get("chinese_translation")
+                    or res_field.get("chinese_letter")
                     or res_field.get("chinese")
                     or res_field.get("zh")
                     or res_field.get("zh_cn")
@@ -563,6 +614,8 @@ async def rec_create(req: Request):
                         en2 = (
                             res2.get("letter_en")
                             or res2.get("recommendation_en")
+                            or res2.get("english_letter")
+                            or res2.get("english_text")
                             or res2.get("english")
                             or res2.get("en")
                             or ""
@@ -570,6 +623,8 @@ async def rec_create(req: Request):
                         zh2 = (
                             res2.get("letter_zh")
                             or res2.get("recommendation_zh")
+                            or res2.get("chinese_translation")
+                            or res2.get("chinese_letter")
                             or res2.get("chinese")
                             or res2.get("zh")
                             or res2.get("zh_cn")
@@ -708,41 +763,16 @@ async def files_upload(req: Request):
     name = str(body.get("name") or "upload.bin")
     b64 = str(body.get("contentBase64") or "")
     purpose = str(body.get("purpose") or "user_data")
-    if not b64:
-        raise HTTPException(status_code=400, detail="contentBase64 is required")
+    content_type = body.get("contentType")
 
     api_key = get_openai_key()
     try:
-        # Prefer stdlib base64 to avoid private APIs; support urlsafe variants
-        import base64
-        # Normalize possible data URLs: strip leading mime header if present
-        if "," in b64 and b64.strip().startswith("data:"):
-            b64 = b64.split(",", 1)[1]
-        try:
-            file_bytes = base64.b64decode(b64, validate=True)
-        except Exception:
-            # Try urlsafe fallback
-            padded = b64 + ("=" * (-len(b64) % 4))
-            file_bytes = base64.urlsafe_b64decode(padded)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid base64 content")
-
-    files = {
-        "file": (name, file_bytes, "application/octet-stream"),
-        "purpose": (None, purpose),
-    }
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        r = await client.post(
-            "https://api.openai.com/v1/files",
-            headers={"Authorization": f"Bearer {api_key}"},
-            files=files,
-        )
-    if "application/json" in (r.headers.get("content-type", "")):
-        data = r.json()
-    else:
-        data = {"text": r.text}
-    if r.status_code >= 400:
-        return JSONResponse(status_code=r.status_code, content={"status": "error", "error": data})
+        data = await upload_base64_to_openai_file(name, b64, purpose, api_key, str(content_type or '') or None)
+    except HTTPException as exc:
+        detail = exc.detail
+        status = exc.status_code
+        payload = detail if isinstance(detail, dict) else {"detail": detail}
+        return JSONResponse(status_code=status, content={"status": "error", "error": payload})
     return {"status": "ok", "file": data}
 
 
@@ -782,6 +812,99 @@ async def files_content(file_id: str):
     if disposition:
         headers["Content-Disposition"] = disposition
     return Response(content=r.content, headers=headers, status_code=200)
+
+
+# Extract plain text from an uploaded file via OpenAI Responses API
+@app.post("/api/files/extract-text")
+async def files_extract_text(req: Request):
+    body = await req.json()
+    name = str(body.get("name") or "upload.bin")
+    b64 = str(body.get("contentBase64") or "")
+    language_hint = str(body.get("language") or "").strip()
+    model = str(body.get("model") or os.getenv("DEFAULT_FASTAPI_MODEL", "gpt-5"))
+    max_tokens = int(body.get("max_output_tokens") or 4096)
+    content_type = body.get("contentType")
+
+    api_key = get_openai_key()
+    try:
+        file_data = await upload_base64_to_openai_file(name, b64, "user_data", api_key, str(content_type or '') or None)
+    except HTTPException as exc:
+        detail = exc.detail
+        status = exc.status_code
+        payload = detail if isinstance(detail, dict) else {"detail": detail}
+        return JSONResponse(status_code=status, content={"ok": False, "error": payload})
+
+    file_id = str(file_data.get("id") or "").strip()
+    if not file_id:
+        raise HTTPException(status_code=500, detail="upload_failed")
+
+    system_bits = [
+        "You are a meticulous document transcription assistant.",
+        "Return ONLY the readable textual content as UTF-8 plain text.",
+        "Preserve headings, bullet markers (- or •), and blank lines between paragraphs.",
+        "Do not summarise, translate, or omit sections."
+    ]
+    if language_hint:
+        system_bits.append(f"Document language hint: {language_hint}.")
+    system_prompt = " ".join(system_bits)
+    user_prompt = "Extract the text from the attached file. Keep original language, punctuation, and structure."
+
+    input_payload = build_responses_input(
+        messages=[{"role": "user", "content": user_prompt}],
+        system_text=system_prompt,
+        user_text=None,
+        file_ids=[file_id],
+    )
+
+    payload = {
+        "model": model,
+        "input": input_payload,
+        "max_output_tokens": max(256, min(max_tokens, 8192)),
+        "metadata": {"purpose": "extract_text"},
+    }
+
+    r = await post_responses(api_key, payload, timeout=120.0)
+    content_type_resp = r.headers.get("content-type", "")
+    if r.status_code >= 400:
+        if "application/json" in content_type_resp:
+            return JSONResponse(status_code=r.status_code, content=r.json())
+        return JSONResponse(status_code=r.status_code, content={"error": r.text})
+
+    model_used = None
+    text_output = ""
+    if "application/json" in content_type_resp:
+        data = r.json()
+        model_used = data.get("model")
+        text_output = (data.get("output_text") or "").strip()
+        if not text_output:
+            try:
+                chunks = data.get("output", [])
+                pieces: list[str] = []
+                for item in chunks:
+                    for content in (item.get("content") or []):
+                        if isinstance(content, dict):
+                            if isinstance(content.get("text"), str):
+                                pieces.append(content["text"])
+                text_output = "".join(pieces).strip()
+            except Exception:
+                text_output = (data.get("reply") or "").strip()
+    else:
+        text_output = r.text.strip()
+
+    # Best-effort cleanup of uploaded file
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            await client.delete(
+                f"https://api.openai.com/v1/files/{file_id}",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+    except Exception:
+        pass
+
+    if not text_output:
+        raise HTTPException(status_code=500, detail="extract_text_empty")
+
+    return {"ok": True, "text": text_output, "file_id": file_id, "model": model_used}
 
 # Convert to Markdown using AI (FastAPI version)
 @app.post("/api/convert-to-md")

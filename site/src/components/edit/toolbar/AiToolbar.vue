@@ -130,7 +130,17 @@
 
       </div>
 
-      <div class="preview-content">{{ previewText }}</div>
+      <div class="preview-content" v-html="diffHtml"></div>
+
+
+
+      <div class="preview-legend" v-if="diffHtml">
+
+        <span class="legend-chip legend-insert">新增</span>
+
+        <span class="legend-chip legend-delete">删除</span>
+
+      </div>
 
       <div class="preview-actions">
 
@@ -195,6 +205,8 @@ const prompt = ref(DEFAULT_PROMPT);
 const showPreview = ref(false);
 
 const previewText = ref('');
+const originalSelection = ref('');
+const diffHtml = computed(() => renderDiff(originalSelection.value, previewText.value));
 const isLoading = ref(false);
 
 const isDragging = ref(false);
@@ -402,6 +414,7 @@ onBeforeUnmount(() => {
 const run = async () => {
   const input = props.getSelection();
   if (!input || isLoading.value) return;
+  originalSelection.value = input;
 
   const workspaceStore = useWorkspaceStore?.();
   const canUseWorkspaceOperator = false; // 工具栏改走独立后端，暂不接入工作区调度
@@ -662,6 +675,146 @@ const cancelPreview = () => {
 
 };
 
+
+
+
+
+function renderDiff(prev: string, next: string): string {
+
+  if (!next && !prev) return '';
+
+  if (prev === next) return escapeHtml(next);
+
+  if (!prev) return '<span class="diff-insert">' + escapeHtml(next) + '</span>';
+
+  if (!next) return '<span class="diff-delete">' + escapeHtml(prev) + '</span>';
+
+  const segments = buildDiff(tokenize(prev), tokenize(next));
+
+  return segments.map((seg) => {
+
+    const html = escapeHtml(seg.text);
+
+    if (!html) return '';
+
+    if (seg.type === 'insert') return '<span class="diff-insert">' + html + '</span>';
+
+    if (seg.type === 'delete') return '<span class="diff-delete">' + html + '</span>';
+
+    return html;
+
+  }).join('');
+
+}
+
+
+
+type DiffSegment = { type: 'equal' | 'delete' | 'insert'; text: string };
+
+
+
+function buildDiff(aTokens: string[], bTokens: string[]): DiffSegment[] {
+
+  const m = aTokens.length;
+
+  const n = bTokens.length;
+
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+
+  for (let i = m - 1; i >= 0; i--) {
+
+    for (let j = n - 1; j >= 0; j--) {
+
+      if (aTokens[i] === bTokens[j]) dp[i][j] = dp[i + 1][j + 1] + 1;
+
+      else dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+
+    }
+
+  }
+
+  const segments: DiffSegment[] = [];
+
+  let i = 0;
+
+  let j = 0;
+
+  while (i < m && j < n) {
+
+    if (aTokens[i] === bTokens[j]) {
+
+      segments.push({ type: 'equal', text: aTokens[i] });
+
+      i++;
+
+      j++;
+
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+
+      segments.push({ type: 'delete', text: aTokens[i] });
+
+      i++;
+
+    } else {
+
+      segments.push({ type: 'insert', text: bTokens[j] });
+
+      j++;
+
+    }
+
+  }
+
+  while (i < m) segments.push({ type: 'delete', text: aTokens[i++] });
+
+  while (j < n) segments.push({ type: 'insert', text: bTokens[j++] });
+
+  return segments;
+
+}
+
+
+
+function tokenize(text: string): string[] {
+
+  if (!text) return [];
+
+  const match = text.match(/(\s+|\S+)/g);
+
+  return match ? match : [];
+
+}
+
+
+
+function escapeHtml(text: string): string {
+
+  return text
+
+    .replace(/&/g, '&amp;')
+
+    .replace(/</g, '&lt;')
+
+    .replace(/>/g, '&gt;')
+
+    .replace(/"/g, '&quot;')
+
+    .replace(/\r/g, '')
+
+    .replace(/\n/g, '<br>')
+
+    .replace(/\t/g, '&nbsp;&nbsp;&nbsp;&nbsp;')
+
+    .replace(/'/g, '&#39;')
+
+
+
+    .replace(/ /g, '&nbsp;');
+
+}
+
+
+
 </script>
 
 
@@ -776,7 +929,31 @@ const cancelPreview = () => {
 }
 
 .preview-content {
-  @apply border border-c/30 rounded-xl bg-c p-3 max-h-48 overflow-auto whitespace-pre-wrap text-dark-c dark:bg-dark-c/40 dark:text-light-c/90;
+  @apply border border-c/30 rounded-xl bg-c p-4 max-h-72 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-dark-c dark:bg-dark-c/40 dark:text-light-c/90;
+}
+
+.diff-insert {
+  @apply text-green-600 dark:text-green-400 bg-green-100/60 dark:bg-green-900/30 px-1.5 py-0.5 rounded-sm font-medium;
+}
+
+.diff-delete {
+  @apply text-red-600 dark:text-red-400 bg-red-100/70 dark:bg-red-900/30 px-1.5 py-0.5 rounded-sm line-through font-medium;
+}
+
+.preview-legend {
+  @apply mt-2 flex items-center gap-2 text-xs text-dark-c/60 dark:text-light-c/60;
+}
+
+.legend-chip {
+  @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px];
+}
+
+.legend-insert {
+  @apply border-green-300 text-green-700 bg-green-100/50 dark:border-green-500/40 dark:text-green-300 dark:bg-green-900/30;
+}
+
+.legend-delete {
+  @apply border-red-300 text-red-700 bg-red-100/60 dark:border-red-500/40 dark:text-red-300 dark:bg-red-900/30;
 }
 
 .preview-actions {
