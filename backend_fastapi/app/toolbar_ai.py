@@ -25,18 +25,19 @@ async def _call_openai(prompt: str, selection: str, *, max_tokens: int, effort: 
     if not api_key:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is missing")
 
-    # o3 works best when supplied with a concise instruction + explicit selection block.
+    # Single interaction: call Responses API directly with o3.
     user_prompt = f"{prompt}\n\n<selection>\n{selection}\n</selection>"
 
-    # Prefer the chat/completions endpoint to keep this flow isolated from Responses API usage.
-    chat_payload = {
-        "model": os.getenv("TOOLBAR_O3_MODEL", "o3"),
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
+    model = os.getenv("TOOLBAR_O3_MODEL", "o3").strip() or "o3"
+
+    payload = {
+        "model": model,
+        "input": [
+            {"role": "system", "content": [{"type": "input_text", "text": SYSTEM_PROMPT}]},
+            {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
         ],
-        "max_tokens": max_tokens,
-        "temperature": 0.2,
+        "max_output_tokens": max_tokens,
+        "reasoning": {"effort": effort},
     }
 
     headers = {
@@ -45,26 +46,6 @@ async def _call_openai(prompt: str, selection: str, *, max_tokens: int, effort: 
     }
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        chat_resp = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers=headers,
-            json=chat_payload,
-        )
-        if chat_resp.status_code < 400:
-            data = chat_resp.json()
-            text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-            return {"provider": "chat_completions", "text": text, "raw": data}
-
-        # Fallback: attempt Responses API only if chat/completions fails for this model.
-        payload = {
-            "model": chat_payload["model"],
-            "input": [
-                {"role": "system", "content": [{"type": "input_text", "text": SYSTEM_PROMPT}]},
-                {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
-            ],
-            "max_output_tokens": max_tokens,
-            "reasoning": {"effort": effort},
-        }
         resp = await client.post(
             "https://api.openai.com/v1/responses",
             headers=headers,

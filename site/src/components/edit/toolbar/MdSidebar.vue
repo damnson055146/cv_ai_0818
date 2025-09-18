@@ -146,9 +146,9 @@
       :aria-expanded="(!advCollapsed).toString()"
       @click="advCollapsed = !advCollapsed"
     >
-      <span class="i-tabler:hierarchy-3 text-lg"></span>
+      <span class="i-material-symbols:account-tree text-lg"></span>
       <span
-        :class="advCollapsed ? 'i-tabler:chevron-down' : 'i-tabler:chevron-up'"
+        :class="advCollapsed ? 'i-material-symbols:expand-more' : 'i-material-symbols:expand-less'"
         class="absolute -bottom-1 right-0.5 text-[10px] transition-transform duration-200"
       ></span>
     </button>
@@ -165,11 +165,11 @@
             :aria-expanded="internMenuOpen.toString()"
             @click="toggleInternMenu($event)"
           >
-            <span class="i-tabler:briefcase text-sm"></span>
+            <span class="i-material-symbols:work text-xl text-brand"></span>
             <span class="flex-1 truncate text-left">Internship</span>
             <span
               :class="{ 'rotate-180': internMenuOpen }"
-              class="i-tabler:chevron-down text-xs transition-transform duration-200"
+              class="i-material-symbols:expand-more text-xs transition-transform duration-200"
             ></span>
           </button>
           <div
@@ -183,7 +183,7 @@
               title="Add section"
               @click="$emit('add-internship-title'); closeInternMenu()"
             >
-              <span class="i-tabler:plus text-sm"></span>
+              <span class="i-material-symbols:add text-sm"></span>
               Section
             </button>
             <button
@@ -192,7 +192,7 @@
               title="Add entry"
               @click="$emit('add-internship-entry'); closeInternMenu()"
             >
-              <span class="i-tabler:plus text-sm"></span>
+              <span class="i-material-symbols:add text-sm"></span>
               Entry
             </button>
           </div>
@@ -206,11 +206,11 @@
             :aria-expanded="campusMenuOpen.toString()"
             @click="toggleCampusMenu($event)"
           >
-            <span class="i-tabler:school text-sm"></span>
+            <span class="i-material-symbols:school text-xl text-brand"></span>
             <span class="flex-1 truncate text-left">Campus</span>
             <span
               :class="{ 'rotate-180': campusMenuOpen }"
-              class="i-tabler:chevron-down text-xs transition-transform duration-200"
+              class="i-material-symbols:expand-more text-xs transition-transform duration-200"
             ></span>
           </button>
           <div
@@ -224,7 +224,7 @@
               title="Add section"
               @click="$emit('add-campus-title'); closeCampusMenu()"
             >
-              <span class="i-tabler:plus text-sm"></span>
+              <span class="i-material-symbols:add text-sm"></span>
               Section
             </button>
             <button
@@ -233,7 +233,7 @@
               title="Add entry"
               @click="$emit('add-campus-entry'); closeCampusMenu()"
             >
-              <span class="i-tabler:plus text-sm"></span>
+              <span class="i-material-symbols:add text-sm"></span>
               Entry
             </button>
           </div>
@@ -247,11 +247,11 @@
             :aria-expanded="researchMenuOpen.toString()"
             @click="toggleResearchMenu($event)"
           >
-            <span class="i-tabler:flask text-sm"></span>
+            <span class="i-material-symbols:science text-xl text-brand"></span>
             <span class="flex-1 truncate text-left">Research</span>
             <span
               :class="{ 'rotate-180': researchMenuOpen }"
-              class="i-tabler:chevron-down text-xs transition-transform duration-200"
+              class="i-material-symbols:expand-more text-xs transition-transform duration-200"
             ></span>
           </button>
           <div
@@ -265,7 +265,7 @@
               title="Add section"
               @click="$emit('add-research-title'); closeResearchMenu()"
             >
-              <span class="i-tabler:plus text-sm"></span>
+              <span class="i-material-symbols:add text-sm"></span>
               Section
             </button>
             <button
@@ -274,7 +274,7 @@
               title="Add entry"
               @click="$emit('add-research-entry'); closeResearchMenu()"
             >
-              <span class="i-tabler:plus text-sm"></span>
+              <span class="i-material-symbols:add text-sm"></span>
               Entry
             </button>
           </div>
@@ -288,11 +288,11 @@
             :aria-expanded="projectMenuOpen.toString()"
             @click="toggleProjectMenu($event)"
           >
-            <span class="i-tabler:clipboard-list text-sm"></span>
+            <span class="i-material-symbols:assignment text-xl text-brand"></span>
             <span class="flex-1 truncate text-left">Project</span>
             <span
               :class="{ 'rotate-180': projectMenuOpen }"
-              class="i-tabler:chevron-down text-xs transition-transform duration-200"
+              class="i-material-symbols:expand-more text-xs transition-transform duration-200"
             ></span>
           </button>
           <div
@@ -306,7 +306,7 @@
               title="Add section"
               @click="$emit('add-project-title'); closeProjectMenu()"
             >
-              <span class="i-tabler:plus text-sm"></span>
+              <span class="i-material-symbols:add text-sm"></span>
               Section
             </button>
             <button
@@ -315,7 +315,7 @@
               title="Add entry"
               @click="$emit('add-project-entry'); closeProjectMenu()"
             >
-              <span class="i-tabler:plus text-sm"></span>
+              <span class="i-material-symbols:add text-sm"></span>
               Entry
             </button>
           </div>
@@ -329,11 +329,11 @@
             :aria-expanded="publicationMenuOpen.toString()"
             @click="togglePublicationMenu($event)"
           >
-            <span class="i-tabler:book text-sm"></span>
+            <span class="i-material-symbols:menu-book text-xl text-brand"></span>
             <span class="flex-1 truncate text-left">Publications</span>
             <span
               :class="{ 'rotate-180': publicationMenuOpen }"
-              class="i-tabler:chevron-down text-xs transition-transform duration-200"
+              class="i-material-symbols:expand-more text-xs transition-transform duration-200"
             ></span>
           </button>
           <div
@@ -347,7 +347,7 @@
               title="Add section"
               @click="$emit('add-publication-title'); closePublicationMenu()"
             >
-              <span class="i-tabler:plus text-sm"></span>
+              <span class="i-material-symbols:add text-sm"></span>
               Section
             </button>
             <button
@@ -356,7 +356,7 @@
               title="Add entry"
               @click="$emit('add-publication-entry'); closePublicationMenu()"
             >
-              <span class="i-tabler:plus text-sm"></span>
+              <span class="i-material-symbols:add text-sm"></span>
               Entry
             </button>
           </div>
@@ -368,9 +368,9 @@
             type="button"
             @click="$emit('add-skills')"
           >
-            <span class="i-tabler:sparkles text-sm"></span>
+            <span class="i-material-symbols:handyman text-xl text-brand"></span>
             <span class="flex-1 truncate text-left">Skills</span>
-            <span class="i-tabler:arrow-narrow-right text-xs opacity-40"></span>
+            <span class="i-material-symbols:arrow-forward-ios text-xs opacity-40"></span>
           </button>
         </div>
       </div>
@@ -570,7 +570,6 @@ html.dark .editor-sidebar-chip.open {
   );
   box-shadow: 0 6px 14px rgba(244, 114, 182, 0.18), 0 1px 2px rgba(0, 0, 0, 0.25);
 }
+
+/* Use default sizes; switch to bold filled icons for clarity */
 </style>
-
-
-

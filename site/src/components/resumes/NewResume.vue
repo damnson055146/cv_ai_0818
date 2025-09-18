@@ -123,12 +123,22 @@
               </button>
             </div>
           </div>
-          <div v-if="curDoc === 'rec'" class="mt-4 space-y-2">
+          <div v-if="curDoc === 'rec'" id="rec-create" class="mt-4 space-y-2">
             <div text-sm text-light-c>推荐信素材上传</div>
             <div class="space-y-1">
               <label class="text-xs text-light-c">上传文件（必需）</label>
               <input type="file" :accept="acceptedRecTypes" @change="onRecSelect" />
+              <label class="text-xs text-light-c rec-optional-label">上传文件（可选）</label>
               <div v-if="recName" class="text-xs text-light-c">已选择：{{ recName }}</div>
+            </div>
+            <div class="space-y-1 rec-upload-block">
+              <label class="text-xs text-light-c">输入信息（可选）</label>
+              <textarea
+                v-model.trim="recInitialText"
+                rows="4"
+                class="w-full px-3 py-2 rounded border border-c bg-transparent outline-none focus:border-brand transition"
+                placeholder="例如：推荐人与学生关系、课程/项目背景、学生亮点、具体事例等"
+              />
             </div>
             <div class="flex justify-end gap-2 pt-2 border-t border-c">
               <button class="px-3 py-1 rounded bg-gray-200 dark:bg-gray-600" @click="resetDialog">取消</button>
@@ -146,7 +156,7 @@
 const runtimeConfig = useRuntimeConfig()
 const backendBase = computed(() => String((runtimeConfig.public as any)?.backendBase || '').replace(/\/$/, ''))
 const psCfg = computed(() => (runtimeConfig.public as any)?.ps || { requireUpload: false, allowedUploadTypes: ["application/pdf"] })
-const recCfg = computed(() => (runtimeConfig.public as any)?.rec || { requireUpload: true, allowedUploadTypes: ["application/pdf"] })
+const recCfg = computed(() => (runtimeConfig.public as any)?.rec || { requireUpload: false, allowedUploadTypes: ["application/pdf"] })
 const psAllowedTypes = computed(() => {
   const list = Array.isArray(psCfg.value.allowedUploadTypes) && psCfg.value.allowedUploadTypes.length > 0
     ? psCfg.value.allowedUploadTypes
@@ -197,6 +207,7 @@ const lang = ref<Lang | null>(null)
 const projectInfo = ref("")
 const studentInfo = ref("")
 const initialText = ref("")
+const recInitialText = ref("")
 const uploadInputRef = ref<HTMLInputElement | null>(null)
 const uploadFile = ref<UploadPayload | null>(null)
 const uploadParsing = ref(false)
@@ -219,8 +230,10 @@ const canConfirm = computed(() => {
   }
   if (curDoc.value === 'rec') {
     if (!lang.value) return false
-    if (recCfg.value.requireUpload && !recBase64.value) return false
-    return true
+    const hasFile = !!recBase64.value
+    const hasText = Boolean(recInitialText.value?.trim?.() || '')
+    if (recCfg.value.requireUpload) return hasFile
+    return hasFile || hasText
   }
   return true
 })
@@ -238,6 +251,7 @@ const resetDialog = () => {
   if (uploadInputRef.value) uploadInputRef.value.value = ''
   recBase64.value = null
   recName.value = ''
+  recInitialText.value = ''
 }
 
 const openUploadPicker = () => {
@@ -357,7 +371,7 @@ const confirmCreate = async () => {
     const { setPsMetaForPair } = await import('~/utils/ps')
     setPsMetaForPair({ outlineId, bodyId, chatId })
 
-    try {
+    if (fileId) try {
       const { convStore } = await import('~/data/contextStore')
       const prelim: string[] = []
       if (projectInfo.value) prelim.push(`Project: ${projectInfo.value}`)
@@ -745,16 +759,19 @@ const formatChecks = (checks: any): string => {
 
 const confirmCreateRec = async () => {
   if (curDoc.value !== 'rec' || !lang.value) return
-  if (!recBase64.value) return
+  if (!recBase64.value && !recInitialText.value.trim()) return
   recSubmitting.value = true
   try {
-    const up: any = await $fetch(`${backendBase.value}/api/files/upload`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: { name: recName.value || 'upload.bin', contentBase64: recBase64.value, purpose: 'user_data' }
-    })
-    if (!up || up.status !== 'ok' || !up.file || !up.file.id) throw new Error('upload_failed')
-    const fileId = up.file.id as string
+    let fileId: string | null = null
+    if (recBase64.value) {
+      const up: any = await $fetch(`${backendBase.value}/api/files/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: { name: recName.value || 'upload.bin', contentBase64: recBase64.value, purpose: 'user_data' }
+      })
+      if (!up || up.status !== 'ok' || !up.file || !up.file.id) throw new Error('upload_failed')
+      fileId = up.file.id as string
+    }
     // 记录附件消息，供 Chatbot 展示与预览
     try {
       const name = recName.value || 'upload.bin'
@@ -770,7 +787,10 @@ const confirmCreateRec = async () => {
       ;(window as any).__pendingChatMessages = ((window as any).__pendingChatMessages || [])
       ;(window as any).__pendingChatMessages.unshift(marker)
     } catch {}
-    const res: any = await $fetch(`${backendBase.value}/api/rec/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: { file_ids: [fileId], max_output_tokens: 8192, reasoning_effort: 'medium' } })
+    const reqBody: any = { max_output_tokens: 8192, reasoning_effort: 'medium' }
+    if (fileId) reqBody.file_ids = [fileId]
+    if (recInitialText.value.trim()) reqBody.prompt = recInitialText.value.trim()
+    const res: any = await $fetch(`${backendBase.value}/api/rec/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody })
     // 仅提取 Structured Outputs 的 result，并将 "\n" 转义为真正的换行
     const unescapeNewlines = (t: string) => (t || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
     const pickResultString = (obj: any): string => {
@@ -865,3 +885,12 @@ const confirmCreateRec = async () => {
   }
 }
 </script>
+
+<style scoped>
+#rec-create .rec-upload-block > label:first-child {
+  display: none;
+}
+#rec-create .rec-upload-block .rec-optional-label {
+  display: inline-block;
+}
+</style>

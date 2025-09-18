@@ -403,6 +403,8 @@ const initializeWorkspaceIntegration = () => {
     document.removeEventListener('get-document-content', handleGetDocumentContent);
     document.removeEventListener('get-document-structure', handleGetDocumentStructure);
     window.removeEventListener('apply-fix-suggestion', handleApplyFixSuggestion);
+    // 停止 MCP 轮询，避免组件卸载后仍然请求
+    stopEditorCommandPolling();
   });
 };
 
@@ -428,6 +430,7 @@ const replaceFullDocumentText = (text: string) => {
  * MCP 命令轮询与应用
  */
 let commandPollTimer: any = null;
+const MCP_POLL_KEY = '__mcpCommandPoll__' as const;
 type IncomingEditorCommand =
   | { type: 'replace'; target: 'selection' | 'document'; text: string }
   | { type: 'smart_edit'; target: 'selection' | 'document'; prompt: string };
@@ -453,9 +456,14 @@ const buildMcpHeaders = (): Record<string, string> => {
 
 const startEditorCommandPolling = () => {
   if (typeof window === 'undefined') return;
-  if (commandPollTimer) return;
+  const w = window as any;
+  const state = (w[MCP_POLL_KEY] ||= { active: false as boolean, timer: null as any, refs: 0 as number });
+  state.refs++;
+  if (state.active) return;
+  state.active = true;
   const clientId = getClientId();
   const poll = async () => {
+    if (!state.active) return;
     try {
       const base = (window as any).__NUXT__?.config?.app?.baseURL || '/';
       const url = `${base.endsWith('/') ? base : base + '/'}api/editor-commands?clientId=${encodeURIComponent(clientId)}`;
@@ -470,10 +478,24 @@ const startEditorCommandPolling = () => {
     } catch (e) {
       console.warn('[Editor] MCP command polling failed:', e);
     } finally {
-      commandPollTimer = setTimeout(poll, 2000);
+      if (state.active) state.timer = setTimeout(poll, 2000);
     }
   };
   poll();
+};
+
+const stopEditorCommandPolling = () => {
+  if (typeof window === 'undefined') return;
+  const w = window as any;
+  const state = w[MCP_POLL_KEY];
+  if (!state) return;
+  state.refs = Math.max(0, (state.refs || 1) - 1);
+  if (state.refs > 0) return;
+  state.active = false;
+  if (state.timer) {
+    clearTimeout(state.timer);
+    state.timer = null;
+  }
 };
 
 const applyEditorCommand = async (cmd: IncomingEditorCommand) => {
