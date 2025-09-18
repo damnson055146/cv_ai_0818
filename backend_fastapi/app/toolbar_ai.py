@@ -93,11 +93,11 @@ async def rewrite(body: dict):
         raise HTTPException(status_code=400, detail="selection is required")
 
     prompt = str(body.get("prompt") or "").strip() or DEFAULT_PROMPT
-    max_tokens = body.get("max_tokens") or 512
+    max_tokens = body.get("max_tokens") or 1024
     try:
-        max_tokens = max(64, min(int(max_tokens), 2048))
+        max_tokens = max(128, min(int(max_tokens), 4096))
     except Exception:
-        max_tokens = 512
+        max_tokens = 1024
     effort = str(body.get("reasoning_effort") or "medium").lower()
     if effort not in {"low", "medium", "high"}:
         effort = "medium"

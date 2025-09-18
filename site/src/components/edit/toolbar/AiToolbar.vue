@@ -1,4 +1,4 @@
-<template>
+﻿<template>
 
   <div
 
@@ -112,6 +112,29 @@
 
           ></textarea>
 
+          <div class="options-row mt-2 flex items-center gap-3">
+            <label class="option-label text-dark-c/70 dark:text-light-c/70 whitespace-nowrap">Max tokens</label>
+            <input
+              v-model.number="maxTokens"
+              type="number"
+              min="128"
+              max="4096"
+              step="64"
+              class="option-input w-28 px-2 py-1 rounded border border-c/50 dark:border-dark-c/60 bg-c dark:bg-dark-c/40 text-dark-c dark:text-light-c/90"
+            />
+            <span class="text-xs text-dark-c/50 dark:text-light-c/50">128–4096</span>
+
+            <label class="option-label text-dark-c/70 dark:text-light-c/70 whitespace-nowrap ml-4">Effort</label>
+            <select
+              v-model="effort"
+              class="option-input px-2 py-1 rounded border border-c/50 dark:border-dark-c/60 bg-c dark:bg-dark-c/40 text-dark-c dark:text-light-c/90"
+            >
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+            </select>
+          </div>
+
         </div>
 
       </transition>
@@ -130,11 +153,20 @@
 
       </div>
 
-      <div class="preview-content" v-html="diffHtml"></div>
+      <div class="preview-columns grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="preview-box">
+          <div class="preview-box-title text-dark-c/70 dark:text-light-c/70 text-xs mb-1">原文</div>
+          <div class="preview-content" v-html="originalHtml"></div>
+        </div>
+        <div class="preview-box">
+          <div class="preview-box-title text-dark-c/70 dark:text-light-c/70 text-xs mb-1">改写</div>
+          <div class="preview-content" v-html="rewrittenHtml"></div>
+        </div>
+      </div>
 
 
 
-      <div class="preview-legend" v-if="diffHtml">
+      <div class="preview-legend" v-if="false">
 
         <span class="legend-chip legend-insert">新增</span>
 
@@ -205,8 +237,11 @@ const prompt = ref(DEFAULT_PROMPT);
 const showPreview = ref(false);
 
 const previewText = ref('');
+const maxTokens = ref<number>(1024);
+const effort = ref<'low' | 'medium' | 'high'>('medium');
 const originalSelection = ref('');
-const diffHtml = computed(() => renderDiff(originalSelection.value, previewText.value));
+const originalHtml = computed(() => escapeHtml(originalSelection.value || ''));
+const rewrittenHtml = computed(() => escapeHtml(previewText.value || ''));
 const isLoading = ref(false);
 
 const isDragging = ref(false);
@@ -433,6 +468,8 @@ const run = async () => {
           prompt: prompt.value,
           preserveFormatting: true,
           selectedText: input,
+          maxTokens: maxTokens.value,
+          effort: effort.value,
         },
         prompt: `${prompt.value}
 
@@ -485,9 +522,9 @@ const runLegacyAiOperation = async (input: string) => {
 
     selection: input,
 
-    reasoning_effort: 'medium',
+    reasoning_effort: effort.value,
 
-    max_tokens: 512,
+    max_tokens: Math.max(128, Math.min(Number(maxTokens.value) || 1024, 4096)),
 
   };
 
