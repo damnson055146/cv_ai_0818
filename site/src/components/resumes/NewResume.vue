@@ -11,7 +11,7 @@
       </template>
 
       <template #content>
-        <div class="p-4 space-y-4">
+        <div class="relative p-4 space-y-4">
           <div text-sm text-light-c>{{ $t('resumes.choose_doc_type') || 'Choose document type' }}</div>
           <div class="grid grid-cols-3 gap-3">
             <button
@@ -145,6 +145,20 @@
               <button class="px-3 py-1 rounded bg-blue-600 text-white hover:opacity-90" :disabled="!canConfirm || recSubmitting" @click="confirmCreateRec">确定</button>
             </div>
           </div>
+          
+          <!-- 全局加载遮罩：新建文档时调用 Agent 显示动画 -->
+          <div
+            v-if="psSubmitting || recSubmitting"
+            class="absolute inset-0 z-50 flex items-center justify-center rounded-md bg-black/30 backdrop-blur-sm"
+            aria-live="polite"
+          >
+            <div class="flex flex-col items-center gap-3 px-4 py-3 rounded-lg bg-white/90 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-slate-700/60 shadow-md">
+              <span class="w-6 h-6 border-2 border-brand border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+              <div class="text-sm font-medium">
+                {{ agentStep || ($t('common.loading_ai') || '正在调用智能写作，请稍候…') }}
+              </div>
+            </div>
+          </div>
         </div>
       </template>
     </Dialog>
@@ -212,6 +226,8 @@ const uploadInputRef = ref<HTMLInputElement | null>(null)
 const uploadFile = ref<UploadPayload | null>(null)
 const uploadParsing = ref(false)
 const psSubmitting = ref(false)
+const agentStep = ref<string>("")
+const setAgentStep = (msg: string) => { agentStep.value = msg }
 const recBase64 = ref<string | null>(null)
 const recName = ref<string>("")
 const recSubmitting = ref<boolean>(false)
@@ -361,6 +377,7 @@ const confirmCreate = async () => {
   if (curDoc.value !== 'ps' || !lang.value) return
   if (psSubmitting.value) return
   psSubmitting.value = true
+  setAgentStep('准备创建文书...')
   let outlineId: string | null = null
 
   try {
@@ -372,6 +389,7 @@ const confirmCreate = async () => {
     setPsMetaForPair({ outlineId, bodyId, chatId })
 
     if (fileId) try {
+      setAgentStep('准备上下文...')
       const { convStore } = await import('~/data/contextStore')
       const prelim: string[] = []
       if (projectInfo.value) prelim.push(`Project: ${projectInfo.value}`)
@@ -385,6 +403,7 @@ const confirmCreate = async () => {
     let extracted = ''
     if (uploadFile.value) {
       try {
+        setAgentStep('解析上传的素材...')
         extracted = await extractTextFromFile()
       } catch (err) {
         console.error('[PS Upload] failed to extract content', err)
@@ -397,6 +416,7 @@ const confirmCreate = async () => {
 
     if (uploadText) {
       try {
+        setAgentStep('生成初始写作建议...')
         const seed: any = await $fetch('/api/ps/seed-from-upload', {
           method: 'POST',
           body: {
@@ -423,6 +443,7 @@ const confirmCreate = async () => {
     try { (toast as any).import(false) } catch {}
   } finally {
     psSubmitting.value = false
+    setAgentStep('')
   }
 
   if (outlineId) router.push(localePath(`/edit/${outlineId}`))
@@ -761,9 +782,11 @@ const confirmCreateRec = async () => {
   if (curDoc.value !== 'rec' || !lang.value) return
   if (!recBase64.value && !recInitialText.value.trim()) return
   recSubmitting.value = true
+  setAgentStep('准备生成推荐信...')
   try {
     let fileId: string | null = null
     if (recBase64.value) {
+      setAgentStep('上传附件...')
       const up: any = await $fetch(`${backendBase.value}/api/files/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -790,6 +813,7 @@ const confirmCreateRec = async () => {
     const reqBody: any = { max_output_tokens: 8192, reasoning_effort: 'medium' }
     if (fileId) reqBody.file_ids = [fileId]
     if (recInitialText.value.trim()) reqBody.prompt = recInitialText.value.trim()
+    setAgentStep('调用模型生成内容...')
     const res: any = await $fetch(`${backendBase.value}/api/rec/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody })
     // 仅提取 Structured Outputs 的 result，并将 "\n" 转义为真正的换行
     const unescapeNewlines = (t: string) => (t || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
@@ -810,6 +834,7 @@ const confirmCreateRec = async () => {
       }
       return ''
     }
+    setAgentStep('解析与整理结果...')
     let content = ''
     let reasoningForChat = ''
     try {
@@ -867,6 +892,7 @@ const confirmCreateRec = async () => {
       }
       if (!content && typeof raw?.reply === 'string') content = raw.reply
     } catch {}
+    setAgentStep('创建文档...')
     const id = await newResumeFromImport(content || '', recName.value.replace(/\.[^.]+$/, '') || 'Recommendation')
     try {
       const msgs: string[] = (window as any).__pendingChatMessages || []
@@ -877,11 +903,13 @@ const confirmCreateRec = async () => {
       }
     } catch {}
     try { localStorage.setItem('doc_meta_' + id, JSON.stringify({ docType: 'rec', lang: lang.value })) } catch {}
+    setAgentStep('跳转编辑器...')
     router.push(localePath(`/edit/${id}`))
   } catch (e) {
     ;(toast as any).import(false)
   } finally {
     recSubmitting.value = false
+    setAgentStep('')
   }
 }
 </script>

@@ -571,5 +571,11 @@ html.dark .editor-sidebar-chip.open {
   box-shadow: 0 6px 14px rgba(244, 114, 182, 0.18), 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
-/* Use default sizes; switch to bold filled icons for clarity */
+/* Force icon sizing in Structure chips to avoid tiny dots */
+.editor-sidebar-chip > span[class^="i-"] {
+  width: 18px !important;
+  height: 18px !important;
+  font-size: 18px !important; /* for 1em-based icon sizing */
+  flex: none; /* prevent shrinking */
+}
 </style>

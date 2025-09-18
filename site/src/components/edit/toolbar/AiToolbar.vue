@@ -958,7 +958,8 @@ function escapeHtml(text: string): string {
 }
 
 .preview-bubble {
-  @apply absolute left-4 top-full mt-3 w-96 max-w-[80vw] bg-c border border-c/50 rounded-2xl shadow-2xl p-3 space-y-2 text-xs text-dark-c dark:bg-dark-c dark:border-dark-c/60 dark:text-light-c/90;
+  /* Wider bubble to fit two columns comfortably */
+  @apply absolute left-4 top-full mt-3 w-[52rem] max-w-[92vw] bg-c border border-c/50 rounded-2xl shadow-2xl p-4 space-y-3 text-xs text-dark-c dark:bg-dark-c dark:border-dark-c/60 dark:text-light-c/90;
 }
 
 .preview-header {
@@ -966,7 +967,8 @@ function escapeHtml(text: string): string {
 }
 
 .preview-content {
-  @apply border border-c/30 rounded-xl bg-c p-4 max-h-72 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-dark-c dark:bg-dark-c/40 dark:text-light-c/90;
+  /* Taller scroll area to review more text */
+  @apply border border-c/30 rounded-xl bg-c p-4 max-h-[60vh] overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-6 text-dark-c dark:bg-dark-c/40 dark:text-light-c/90;
 }
 
 .diff-insert {
