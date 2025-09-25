@@ -76,8 +76,6 @@
       </div>
     </div>
     
-    <!-- 工作区状态指示器 -->
-    <WorkspaceStatusIndicator />
   </div>
 </template>
 
@@ -93,7 +91,7 @@ import ToolbarScheme3 from "~/components/edit/ToolbarScheme3.vue";
 import MdSidebarScheme1 from "~/components/edit/toolbar/MdSidebarScheme1.vue";
 import MdSidebarScheme2 from "~/components/edit/toolbar/MdSidebarScheme2.vue";
 import MdSidebarScheme3 from "~/components/edit/toolbar/MdSidebarScheme3.vue";
-import WorkspaceStatusIndicator from "~/components/shared/WorkspaceStatusIndicator.vue";
+
 
 // Horizontal splitpane
 const [state, send] = useMachine(

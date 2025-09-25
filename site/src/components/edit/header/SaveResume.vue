@@ -1,5 +1,5 @@
 <template>
-  <div class="flex space-x-2">
+  <div class="flex space-x-2 items-center">
     <button class="round-btn" @click="save" title="保存">
       <span i-ic:baseline-save md:text-lg />
     </button>

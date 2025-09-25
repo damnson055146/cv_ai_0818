@@ -7,6 +7,7 @@ export default defineEventHandler(async (event) => {
     const body = await readBody(event)
     const config: any = useRuntimeConfig()
     const pub = config.public as any
+    const backendBase: string = String(pub?.backendBase || '')
     const baseDir: string = pub?.psPrompts?.baseDir || ''
     const files = pub?.psPrompts?.files || {}
 
@@ -18,7 +19,29 @@ export default defineEventHandler(async (event) => {
     const nextOutline = (body?.guidance_outline ?? '') as string
     const nextElement = (body?.guidance_element ?? '') as string
 
-    // Only overwrite files that are provided; allow partial updates
+    // Prefer saving to backend DB
+    if (backendBase) {
+      try {
+        const tasks: Promise<any>[] = []
+        if (typeof body?.ps_requirement === 'string') {
+          tasks.push($fetch(`${backendBase}/api/prompts/ps_requirement`, { method: 'POST', body: { value: nextRequirement } }))
+        }
+        if (typeof body?.guidance_outline === 'string') {
+          tasks.push($fetch(`${backendBase}/api/prompts/guidance_outline`, { method: 'POST', body: { value: nextOutline } }))
+        }
+        if (typeof body?.guidance_element === 'string') {
+          tasks.push($fetch(`${backendBase}/api/prompts/guidance_element`, { method: 'POST', body: { value: nextElement } }))
+        }
+        if (tasks.length) {
+          await Promise.all(tasks)
+          return { status: 'ok' }
+        }
+      } catch (e: any) {
+        // fall through to filesystem if backend not reachable
+      }
+    }
+
+    // Fallback: Only overwrite files that are provided; allow partial updates
     await Promise.all([
       typeof body?.ps_requirement === 'string' ? fs.writeFile(requirementPath, nextRequirement, 'utf-8') : Promise.resolve(),
       typeof body?.guidance_outline === 'string' ? fs.writeFile(outlinePath, nextOutline, 'utf-8') : Promise.resolve(),

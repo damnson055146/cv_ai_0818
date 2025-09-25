@@ -4,6 +4,7 @@ import os
 
 import httpx
 from fastapi import APIRouter, HTTPException
+from .db import get_prompt
 
 router = APIRouter(prefix="/api/toolbar", tags=["toolbar-ai"])
 
@@ -30,10 +31,11 @@ async def _call_openai(prompt: str, selection: str, *, max_tokens: int, effort: 
 
     model = os.getenv("TOOLBAR_O3_MODEL", "o3").strip() or "o3"
 
+    sys_prompt = get_prompt("toolbar_system_prompt") or SYSTEM_PROMPT
     payload = {
         "model": model,
         "input": [
-            {"role": "system", "content": [{"type": "input_text", "text": SYSTEM_PROMPT}]},
+            {"role": "system", "content": [{"type": "input_text", "text": sys_prompt}]},
             {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
         ],
         "max_output_tokens": max_tokens,
@@ -81,7 +83,7 @@ async def _call_openai(prompt: str, selection: str, *, max_tokens: int, effort: 
 async def get_default_prompt():
     return {
         "presets": [
-            {"name": "Humanise tone", "prompt": DEFAULT_PROMPT},
+            {"name": "Humanise tone", "prompt": (get_prompt("toolbar_default_prompt") or DEFAULT_PROMPT)},
         ]
     }
 
@@ -92,7 +94,7 @@ async def rewrite(body: dict):
     if not selection:
         raise HTTPException(status_code=400, detail="selection is required")
 
-    prompt = str(body.get("prompt") or "").strip() or DEFAULT_PROMPT
+    prompt = str(body.get("prompt") or "").strip() or (get_prompt("toolbar_default_prompt") or DEFAULT_PROMPT)
     max_tokens = body.get("max_tokens") or 1024
     try:
         max_tokens = max(128, min(int(max_tokens), 4096))

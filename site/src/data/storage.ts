@@ -51,8 +51,8 @@ export class FlatStorageManager {
   }
 
   private config: StorageConfig = {
-    maxVersionHistory: 100,
-    maxOperationHistory: 1000,
+    maxVersionHistory: 30,
+    maxOperationHistory: 300,
     autoSaveIntervalMs: 30000,
     debugMode: false,
     enablePersistence: true
@@ -539,14 +539,50 @@ export class FlatStorageManager {
    */
   private async saveToLocalStorage(key: string, data: any): Promise<void> {
     try {
-      const jsonString = JSON.stringify(data)
+      let jsonString = JSON.stringify(data)
+      // Preflight: if payload is too big and array-like, thin it proactively
+      if (jsonString.length > 4_000_000 && Array.isArray(data)) {
+        const keep = key.startsWith(this.keys.DOCUMENT_VERSIONS)
+          ? Math.min(10, data.length)
+          : key.startsWith(this.keys.OPERATION_RECORDS)
+            ? Math.min(100, data.length)
+            : Math.max(1, Math.floor(data.length / 3))
+        const trimmed = data.slice(-keep)
+        jsonString = JSON.stringify(trimmed)
+      }
       localStorage.setItem(key, jsonString)
-      
       if (this.config.debugMode) {
         console.log(`[FlatStorage] Saved to ${key}, size: ${jsonString.length} chars`)
       }
-    } catch (error) {
+    } catch (error: any) {
+      const msg = (error && (error.message || error.toString())) || ''
+      const isQuota = (error && error.name === 'QuotaExceededError') || /QuotaExceeded/i.test(msg)
+      if (isQuota) {
+        try {
+          // Best-effort trimming for array-like buckets (versions, operations)
+          if (Array.isArray(data) && data.length > 1) {
+            let trimmed: any[]
+            if (key.startsWith(this.keys.DOCUMENT_VERSIONS)) {
+              trimmed = data.slice(-10)
+            } else if (key.startsWith(this.keys.OPERATION_RECORDS)) {
+              trimmed = data.slice(-100)
+            } else {
+              trimmed = data.slice(Math.floor(data.length / 2))
+            }
+            const s = JSON.stringify(trimmed)
+            localStorage.setItem(key, s)
+            console.warn(`[FlatStorage] Quota exceeded: trimmed ${key} -> ${trimmed.length} items`)
+            return
+          }
+        } catch (e) {
+          // ignore and fall through
+        }
+        // As a last resort: skip persistence to keep UI responsive
+        console.warn(`[FlatStorage] Quota exceeded: skipped saving ${key}`)
+        return
+      }
       console.error(`[FlatStorage] Failed to save ${key}:`, error)
+      // Non-quota errors: rethrow for visibility
       throw error
     }
   }

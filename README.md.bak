@@ -1,4 +1,4 @@
-<h1 align="center">Markdown Resume</h1>
+﻿<h1 align="center">Markdown Resume</h1>
 
 <p align="center">Write an ATS-friendly Resume in Markdown. Available for anyone, Optimized for Dev.</p>
 
@@ -26,7 +26,7 @@ Highly recommend using Chromium-based browsers, e.g., [Chrome](https://www.googl
 - Export to A4 and US Letter size PDFs
 - Customize page margins, theme colors, line heights, fonts, etc.
 - Pick any fonts from [Google Fonts](https://fonts.google.com/)
-- Add icons easily via [Iconify](https://github.com/iconify/iconify) (search for icons on [Icônes](https://icones.js.org/))
+- Add icons easily via [Iconify](https://github.com/iconify/iconify) (search for icons on [Ic么nes](https://icones.js.org/))
 - Tex support ([KaTeX](https://github.com/KaTeX/KaTeX))
 - Cross-reference (would be useful for an academic CV)
 - Case correction (e.g. `Github` -> `GitHub`)
@@ -80,7 +80,7 @@ This project is licensed under [MIT](LICENSE) license.
 
 ---
 
-Made with ☕ by Junian.
+Made with 鈽?by Junian.
 Appreciate the effort from Junian --Pan
 
 # CV AI Project
@@ -117,15 +117,6 @@ Agent endpoint notes:
   - Reads current editor state from Nuxt: `GET ${NUXT_BASE_URL}/api/editor-state?clientId=...` (sends `x-mcp-token` if `MCP_QUEUE_TOKEN` is set).
   - Uses OpenAI Responses API (`gpt-5`, reasoning medium) and returns JSON with `steps`, `targets`, `result`, `reasoning_summary`.
 
-### Chatbot Settings UI
-- Manage prompts at `site` route: `/admin/chatbot-settings`.
-  - Per-type system prompts: keys `agent_act_system_prompt:{cv|ps|rec}`.
-  - Per-type append prompts: keys `agent_act_global_append:{cv|ps|rec}`.
-  - Global fallbacks: `agent_act_system_prompt`, `agent_act_global_append`.
-  - Concatenation order per type: `agent_act_concat_order:{cv|ps|rec}` with JSON array of `"system"|"append"|"session"`.
-  - Session prompt by id: `agent_act_session_prompt:{session_id}`.
-- If backend sets `PROMPTS_ADMIN_TOKEN`, fill the Admin Token field so POST updates include `x-admin-token`.
-
 ### Removed Node endpoints
 The following Nuxt server routes have been removed in favor of FastAPI:
 - `site/src/server/api/ai.post.ts`
@@ -158,14 +149,14 @@ All system/user prompts are managed via a single SQLite table `prompts` (file: `
 
 - Chatbot (ACT) keys and stitching
   - Final system prompt = join non-empty with blank lines:
-    1) Base (by doc type): `agent_act_system_prompt:{cv|ps|rec}` → fallback `agent_act_system_prompt` → ENV file → repo root `{cv|ps|rec}_sys.md` → built-in
-    2) Global append (optional): `agent_act_global_append:{cv|ps|rec}` → fallback `agent_act_global_append` → ENV file → empty
+    1) Base (by doc type): `agent_act_system_prompt:{cv|ps|rec}` 鈫?fallback `agent_act_system_prompt` 鈫?ENV file 鈫?repo root `{cv|ps|rec}_sys.md` 鈫?built-in
+    2) Global append (optional): `agent_act_global_append:{cv|ps|rec}` 鈫?fallback `agent_act_global_append` 鈫?ENV file 鈫?empty
     3) Session-level (optional): `agent_act_session_prompt:{session_id}`
   - Doc type selection:
     - Frontend sends `doc_type` (from store/local metadata when available), else backend auto-detects from instruction/document.
   - UI entries:
-    - Chatbot header: Gear = “Manage Chatbot Prompts” (edits `agent_*` keys)
-    - Chatbot header: Notebook = “Session Prompt” (edits `agent_act_session_prompt:{session_id}`)
+    - Chatbot header: Gear = 鈥淢anage Chatbot Prompts鈥?(edits `agent_*` keys)
+    - Chatbot header: Notebook = 鈥淪ession Prompt鈥?(edits `agent_act_session_prompt:{session_id}`)
 
 - PS (Personal Statement) prompts
   - System prompts for the 3 stages (DB-first, then fallback to built-ins):
@@ -187,25 +178,10 @@ All system/user prompts are managed via a single SQLite table `prompts` (file: `
       - `ps_system_element|ps_system_outline|ps_system_body` (English defaults)
       - `toolbar_default_prompt|toolbar_system_prompt`
 
-- Database (PS tables)
-  - Created on backend start:
-    - `ps_documents` (per-document, initially empty): `doc_id`, `info_program`, `info_ps_requirement`, `info_student_profile`, timestamps
-    - `ps_settings` (global, initially empty): `key`, `value`, `updated_at` (can store `guidance_element`, `guidance_outline` if you prefer separate from `prompts`)
-
-- PS system from files (one-off)
-  - To overwrite PS three-stage system prompts from your own copy files in one go:
-    - Option A (script):
-      - `python backend_fastapi/scripts/seed_ps_system_from_files.py --element <path/to/element.md> --outline <path/to/outline.md> --body <path/to/body.md>`
-      - Or set env `PS_SYSTEM_ELEMENT_FILE`, `PS_SYSTEM_OUTLINE_FILE`, `PS_SYSTEM_BODY_FILE` and run the script without args.
-    - Option B (API):
-      - `POST {FASTAPI}/api/prompts/seed-ps-system` with JSON body, any of:
-        - `{ "element_file": "C:/.../element.md", "outline_file": ".../outline.md", "body_file": ".../body.md" }`
-        - or raw text: `{ "element_text": "...", "outline_text": "...", "body_text": "..." }`
-      - Protected by `PROMPTS_ADMIN_TOKEN` when set; include header `x-admin-token` to authorize.
-
 - ENV overrides for file-based fallbacks (optional)
-  - ACT base: `AGENT_ACT_PROMPT_FILE_{CV|PS|REC}` → `AGENT_ACT_PROMPT_FILE`
-  - ACT append: `AGENT_ACT_APPEND_FILE_{CV|PS|REC}` → `AGENT_ACT_APPEND_FILE`
+  - ACT base: `AGENT_ACT_PROMPT_FILE_{CV|PS|REC}` 鈫?`AGENT_ACT_PROMPT_FILE`
+  - ACT append: `AGENT_ACT_APPEND_FILE_{CV|PS|REC}` 鈫?`AGENT_ACT_APPEND_FILE`
 
-Tip: Prefer editing from the UI “管理提示词” dialogs. For Chatbot-specific keys, use the Chatbot’s gear button; for all other keys (PS/Toolbar/REC), use the “管理提示词” buttons on the home and document pages (left of Save/Save As).
+Tip: Prefer editing from the UI 鈥滅鐞嗘彁绀鸿瘝鈥?dialogs. For Chatbot-specific keys, use the Chatbot鈥檚 gear button; for all other keys (PS/Toolbar/REC), use the 鈥滅鐞嗘彁绀鸿瘝鈥?buttons on the home and document pages (left of Save/Save As).
+
 

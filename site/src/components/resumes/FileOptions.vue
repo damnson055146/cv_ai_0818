@@ -1,5 +1,17 @@
 <template>
   <div class="file-options hstack space-x-2">
+    <Dialog id="manage-prompts-home" title="管理提示词" icon="i-ph:gear" box-class="w-full md:w-180">
+      <template #button>
+        <button aria-label="管理提示词">
+          <span class="i-ph:gear-six text-lg" />
+          <span>管理</span>
+        </button>
+      </template>
+      <template #content>
+        <PromptManager scope="general" />
+      </template>
+    </Dialog>
+
     <button :aria-label="$t('resumes.saveas')" @click="saveResumesToLocal">
       <span i-ic:baseline-save-as text-lg />
       <span>{{ $t("resumes.saveas") }}</span>
@@ -28,6 +40,7 @@
 import { useShortcuts } from "@renovamen/vue-shortcuts";
 import Dialog from "~/components/shared/base/Dialog.vue";
 import ImportDialogContent from "~/components/edit/toolbar/ImportDialogContent.vue";
+import PromptManager from "~/components/shared/PromptManager.vue";
 import { newResumeFromImport } from "~/utils/database";
 const router = useRouter();
 const localePath = useLocalePath();

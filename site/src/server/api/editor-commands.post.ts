@@ -1,21 +1,27 @@
 import { defineEventHandler, readBody, setResponseStatus } from 'h3'
 
 interface EditorCommandBase {
-  type: 'replace' | 'smart_edit'
-  target: 'selection' | 'document'
+  type: 'replace' | 'smart_edit' | 'select'
 }
 
 interface ReplaceCommand extends EditorCommandBase {
   type: 'replace'
+  target: 'selection' | 'document'
   text: string
 }
 
 interface SmartEditCommand extends EditorCommandBase {
   type: 'smart_edit'
+  target: 'selection' | 'document'
   prompt: string
 }
 
-type EditorCommand = ReplaceCommand | SmartEditCommand
+interface SelectCommand extends EditorCommandBase {
+  type: 'select'
+  range: { start: number; end: number }
+}
+
+type EditorCommand = ReplaceCommand | SmartEditCommand | SelectCommand
 
 type QueueMap = Map<string, EditorCommand[]>
 
@@ -60,6 +66,13 @@ export default defineEventHandler(async (event) => {
   if (command.type === 'smart_edit' && typeof (command as any).prompt !== 'string') {
     setResponseStatus(event, 400)
     return { error: 'smart_edit command requires prompt' }
+  }
+  if (command.type === 'select') {
+    const r = (command as any).range
+    if (!r || typeof r.start !== 'number' || typeof r.end !== 'number') {
+      setResponseStatus(event, 400)
+      return { error: 'select command requires range {start,end}' }
+    }
   }
 
   const list = queues.get(clientId) || []

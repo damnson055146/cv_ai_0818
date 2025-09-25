@@ -1,0 +1,165 @@
+﻿<template>
+  <div class="prompt-settings flex flex-col gap-4">
+    <!-- Doc-type prompts (cv/ps/rec) -->
+    <section>
+      <div class="section-title">文档类型提示词</div>
+      <div class="tabs">
+        <button v-for="t in docTypes" :key="t"
+                :class="['tab', selType===t && 'active']"
+                @click="selType=t">{{ t.toUpperCase() }}</button>
+      </div>
+      <div class="mt-2 space-y-2">
+        <div class="text-xs opacity-60">閿悕锛歿{ systemKey(selType) }}</div>
+        <textarea v-model="systemValues[selType]" class="w-full h-36 rounded border border-light-c p-2 text-xs font-mono" placeholder="输入该类型的系统提示词"></textarea>
+        <div class="flex justify-end gap-2">
+          <button class="rect-btn px-3 py-1 border border-light-c" :disabled="savingSys" @click="saveSystemPrompt(selType)">淇濆瓨 {{ selType.toUpperCase() }}</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Concatenation order -->
+    <section>
+      <div class="section-title">鎷兼帴椤哄簭涓庨€夋嫨</div>
+      <div class="tabs">
+        <button v-for="t in docTypes" :key="t + '-order'"
+                :class="['tab', selOrderType===t && 'active']"
+                @click="selOrderType=t">{{ t.toUpperCase() }}</button>
+
+      </div>
+      <div class="mt-2">
+        <div class="text-xs opacity-60 mb-2">键名：{{ orderKey(selOrderType) }}（值为 JSON 数组，如 ["system","append","session"]）</div>
+        <ul class="order-list">
+          <li v-for="(seg, idx) in orderValues[selOrderType]" :key="seg" class="order-item">
+            <span class="seg">{{ labelOf(seg) }}</span>
+            <div class="ops">
+              <button class="tiny" :disabled="idx===0" @click="moveUp(idx)">上移</button>
+              <button class="tiny" :disabled="idx===orderValues[selOrderType].length-1" @click="moveDown(idx)">下移</button>
+              <button class="tiny" @click="toggleSeg(seg)">{{ hasSeg(seg) ? '绉婚櫎' : '娣诲姞' }}</button>
+            </div>
+          </li>
+        </ul>
+        <div class="mt-2 text-xs opacity-60">鍙敤娈碉細
+          <span v-for="c in candidates" :key="c" class="candidate" :class="hasSeg(c) ? 'on' : ''" @click="toggleSeg(c)">{{ labelOf(c) }}</span>
+        </div>
+        <div class="flex justify-end gap-2 mt-2">
+          <button class="rect-btn px-3 py-1 border border-light-c" :disabled="savingOrder" @click="saveOrder(selOrderType)">淇濆瓨椤哄簭</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, reactive, onMounted } from 'vue'
+import { useRuntimeConfig } from '#imports'
+
+type DocType = 'cv'|'ps'|'rec'
+type Segment = 'system'|'append'|'session'
+
+const cfg = useRuntimeConfig()
+const backendBase: string = (cfg.public as any)?.backendBase || ''
+const apiBase = backendBase ? backendBase.replace(/\/$/, '') : ''
+
+const docTypes: DocType[] = ['cv','ps','rec']
+const candidates: Segment[] = ['system','append','session']
+
+const selType = ref<DocType>('cv')
+const selOrderType = ref<DocType>('cv')
+
+const savingSys = ref(false)
+const savingOrder = ref(false)
+
+const systemValues = reactive<Record<DocType, string>>({ cv: '', ps: '', rec: '' })
+const orderValues = reactive<Record<DocType, Segment[]>>({ cv: ['system','append','session'], ps: ['system','append','session'], rec: ['system','append','session'] })
+
+function systemKey(t: DocType) { return `agent_act_system_prompt:${t}` }
+function orderKey(t: DocType) { return `agent_act_concat_order:${t}` }
+function labelOf(seg: Segment): string {
+  return seg === 'system' ? '系统提示' : seg === 'append' ? '附加' : '会话'
+}
+function hasSeg(seg: Segment): boolean { return orderValues[selOrderType.value].includes(seg) }
+function toggleSeg(seg: Segment) {
+  const arr = orderValues[selOrderType.value]
+  const i = arr.indexOf(seg)
+  if (i >= 0) arr.splice(i, 1)
+  else arr.push(seg)
+}
+function moveUp(idx: number) {
+  const arr = orderValues[selOrderType.value]
+  if (idx <= 0) return
+  const [x] = arr.splice(idx, 1)
+  arr.splice(idx - 1, 0, x)
+}
+function moveDown(idx: number) {
+  const arr = orderValues[selOrderType.value]
+  if (idx >= arr.length - 1) return
+  const [x] = arr.splice(idx, 1)
+  arr.splice(idx + 1, 0, x)
+}
+
+async function loadSystemPrompt(t: DocType) {
+  try {
+    const url = `${apiBase}/api/prompts/${encodeURIComponent(systemKey(t))}`
+    const r = await fetch(url)
+    const data = await r.json().catch(() => ({}))
+    systemValues[t] = (data && data.value) || ''
+  } catch { systemValues[t] = '' }
+}
+async function saveSystemPrompt(t: DocType) {
+  savingSys.value = true
+  try {
+    const url = `${apiBase}/api/prompts/${encodeURIComponent(systemKey(t))}`
+    await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: systemValues[t] || '' }) })
+  } finally { savingSys.value = false }
+}
+
+async function loadOrder(t: DocType) {
+  try {
+    const url = `${apiBase}/api/prompts/${encodeURIComponent(orderKey(t))}`
+    const r = await fetch(url)
+    const data = await r.json().catch(() => ({}))
+    const v = (data && data.value) || ''
+    if (v && typeof v === 'string') {
+      try {
+        const arr = JSON.parse(v)
+        if (Array.isArray(arr)) {
+          const filtered = arr.filter((x: any) => ['system','append','session'].includes(String(x))) as Segment[]
+          if (filtered.length) orderValues[t] = filtered
+        }
+      } catch {}
+    }
+  } catch {}
+}
+async function saveOrder(t: DocType) {
+  savingOrder.value = true
+  try {
+    const url = `${apiBase}/api/prompts/${encodeURIComponent(orderKey(t))}`
+    await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: JSON.stringify(orderValues[t]) }) })
+  } finally { savingOrder.value = false }
+}
+
+onMounted(async () => {
+  for (const t of docTypes) {
+    await loadSystemPrompt(t)
+    await loadOrder(t)
+  }
+})
+</script>
+
+<style scoped>
+.section-title { font-size: 12px; font-weight: 600; opacity: 0.7; }
+.tabs { display: inline-flex; gap: 6px; margin-top: 6px; }
+.tab { padding: 4px 8px; font-size: 12px; border: 1px solid var(--color-border, #ddd); border-radius: 6px; background: transparent; }
+.tab.active { background: rgba(0,0,0,0.06); }
+.rect-btn { border-radius: 8px; }
+.order-list { display: flex; flex-direction: column; gap: 6px; }
+.order-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; border: 1px solid rgba(0,0,0,0.08); border-radius: 8px; }
+.seg { font-size: 12px; opacity: 0.8; }
+.ops { display: inline-flex; gap: 6px; }
+.tiny { font-size: 12px; padding: 2px 6px; border: 1px solid rgba(0,0,0,0.15); border-radius: 6px; }
+.candidate { display: inline-block; margin-right: 8px; cursor: pointer; padding: 2px 6px; border: 1px dashed rgba(0,0,0,0.2); border-radius: 6px; font-size: 12px; }
+.candidate.on { background: rgba(0,0,0,0.06); }
+.border-light-c { border-color: rgba(0,0,0,0.1); }
+</style>
+
+

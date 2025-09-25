@@ -60,6 +60,57 @@ export default defineEventHandler(async (event) => {
                 }
               },
               {
+                name: 'read_selection',
+                description: 'Read current editor selection text and range for a client',
+                input_schema: {
+                  type: 'object',
+                  properties: {
+                    clientId: { type: 'string' }
+                  },
+                  required: ['clientId']
+                }
+              },
+              {
+                name: 'read_document',
+                description: 'Read full document or a character range (start/end) for a client',
+                input_schema: {
+                  type: 'object',
+                  properties: {
+                    clientId: { type: 'string' },
+                    start: { type: 'number' },
+                    end: { type: 'number' }
+                  },
+                  required: ['clientId']
+                }
+              },
+              {
+                name: 'select_range',
+                description: 'Set current selection by character offsets [start,end)',
+                input_schema: {
+                  type: 'object',
+                  properties: {
+                    clientId: { type: 'string' },
+                    start: { type: 'number' },
+                    end: { type: 'number' }
+                  },
+                  required: ['clientId', 'start', 'end']
+                }
+              },
+              {
+                name: 'replace_range',
+                description: 'Replace text in [start,end) with provided text',
+                input_schema: {
+                  type: 'object',
+                  properties: {
+                    clientId: { type: 'string' },
+                    start: { type: 'number' },
+                    end: { type: 'number' },
+                    text: { type: 'string' }
+                  },
+                  required: ['clientId', 'start', 'end', 'text']
+                }
+              },
+              {
                 name: 'smart_edit',
                 description: 'Run smart edit via LLM and apply to selection or document',
                 input_schema: {
@@ -100,8 +151,62 @@ export default defineEventHandler(async (event) => {
           }
           const res = await $fetch('/api/editor-commands', {
             method: 'POST',
-            headers: Object.assign({}, clientToken ? { 'x-mcp-token': clientToken } : undefined, (event.node.req.headers['x-chatbot-mode'] ? { 'x-chatbot-mode': String(event.node.req.headers['x-chatbot-mode']) } : {})),
+            headers: Object.assign({}, clientToken ? { 'x-mcp-token': clientToken } : undefined),
             body: payload
+          })
+          return { jsonrpc: '2.0', id, result: { queued: res?.queued ?? 0 } }
+        }
+
+        if (name === 'read_selection') {
+          const url = `/api/editor-state?clientId=${encodeURIComponent(String(args.clientId))}`
+          const res: any = await $fetch(url, { headers: Object.assign({}, clientToken ? { 'x-mcp-token': clientToken } : undefined) })
+          const sel = res?.selection || {}
+          return { jsonrpc: '2.0', id, result: { hasSelection: !!sel?.hasSelection, text: sel?.text || '', start: sel?.start ?? 0, end: sel?.end ?? 0, startLine: sel?.startLine ?? null, startColumn: sel?.startColumn ?? null, endLine: sel?.endLine ?? null, endColumn: sel?.endColumn ?? null } }
+        }
+
+        if (name === 'read_document') {
+          const url = `/api/editor-state?clientId=${encodeURIComponent(String(args.clientId))}`
+          const res: any = await $fetch(url, { headers: Object.assign({}, clientToken ? { 'x-mcp-token': clientToken } : undefined) })
+          const doc: string = typeof res?.doc === 'string' ? res.doc : ''
+          let content = doc
+          const start = typeof args.start === 'number' ? Math.max(0, Math.floor(args.start)) : undefined
+          const end = typeof args.end === 'number' ? Math.max(0, Math.floor(args.end)) : undefined
+          if (start !== undefined || end !== undefined) {
+            const s = start ?? 0
+            const e = end !== undefined ? end : doc.length
+            content = doc.slice(Math.max(0, Math.min(s, doc.length)), Math.max(0, Math.min(e, doc.length)))
+          }
+          return { jsonrpc: '2.0', id, result: { length: doc.length, content } }
+        }
+
+        if (name === 'select_range') {
+          const payload = {
+            clientId: String(args.clientId),
+            command: { type: 'select', range: { start: Number(args.start), end: Number(args.end) } }
+          }
+          const res = await $fetch('/api/editor-commands', {
+            method: 'POST',
+            headers: Object.assign({}, clientToken ? { 'x-mcp-token': clientToken } : undefined),
+            body: payload
+          })
+          return { jsonrpc: '2.0', id, result: { queued: res?.queued ?? 0 } }
+        }
+
+        if (name === 'replace_range') {
+          // enqueue select then replace selection with text
+          const clientId = String(args.clientId)
+          const start = Number(args.start)
+          const end = Number(args.end)
+          const text = String(args.text || '')
+          await $fetch('/api/editor-commands', {
+            method: 'POST',
+            headers: Object.assign({}, clientToken ? { 'x-mcp-token': clientToken } : undefined),
+            body: { clientId, command: { type: 'select', range: { start, end } } }
+          })
+          const res = await $fetch('/api/editor-commands', {
+            method: 'POST',
+            headers: Object.assign({}, clientToken ? { 'x-mcp-token': clientToken } : undefined),
+            body: { clientId, command: { type: 'replace', target: 'selection', text } }
           })
           return { jsonrpc: '2.0', id, result: { queued: res?.queued ?? 0 } }
         }
@@ -113,7 +218,7 @@ export default defineEventHandler(async (event) => {
           }
           const res = await $fetch('/api/editor-commands', {
             method: 'POST',
-            headers: Object.assign({}, clientToken ? { 'x-mcp-token': clientToken } : undefined, (event.node.req.headers['x-chatbot-mode'] ? { 'x-chatbot-mode': String(event.node.req.headers['x-chatbot-mode']) } : {})),
+            headers: Object.assign({}, clientToken ? { 'x-mcp-token': clientToken } : undefined),
             body: payload
           })
           return { jsonrpc: '2.0', id, result: { queued: res?.queued ?? 0 } }

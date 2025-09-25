@@ -37,6 +37,11 @@
 - Google Fonts: `NUXT_PUBLIC_GOOGLE_FONTS_KEY` in `site/.env`.
 - Backend: set `OPENAI_API_KEY` and optional `FASTAPI_CORS_ALLOW_ORIGINS` in `backend_fastapi/.env`.
 
+## Chatbot Visibility
+- Chatbot floating bubble should NOT show on the homepage by default.
+- Configure hidden routes via `runtimeConfig.public.chatbot.bubbleHiddenRoutes` in `site/nuxt.config.ts` (default: `['/','/en','/sp','/zh-cn']`).
+- The component `site/src/components/shared/Chatbot.vue` reads this list and hides itself when the current `route.path` matches.
+
 ## Agent Notes
 - Keep changes scoped; align with existing structure and naming.
 - Update README or docs when adding commands, envs, or endpoints.

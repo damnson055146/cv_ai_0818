@@ -11,6 +11,8 @@ const SITE_URL = process.env.NUXT_PUBLIC_SITE_URL || process.env.SITE_URL || "ht
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   srcDir: "src/",
+  // Disable Vue Inspector to avoid dev transform conflicts on complex templates
+  devtools: { enabled: false },
 
   modules: [
     "@vueuse/nuxt",
@@ -44,8 +46,9 @@ export default defineNuxtConfig({
     // SiliconFlow server-side key (preferred: server-only)
     siliconFlowApiKey: process.env.SILICON_FLOW_API_KEY || "",
     public: {
-      // FastAPI backend base (absolute). Default to local FastAPI in dev if env missing.
-      backendBase: (process.env.FASTAPI_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, ''),
+      // FastAPI backend base (absolute). Use env when provided; otherwise leave blank
+      // so client code falls back to same-origin relative `/api/*`.
+      backendBase: (process.env.FASTAPI_BASE_URL || "").replace(/\/$/, ''),
       // SiliconFlow client-visible helpers (no secrets)
       // Lowercase keys are what server reads: config.public.siliconFlowBaseUrl / siliconFlowModel
       siliconFlowBaseUrl: process.env.SILICON_FLOW_BASE_URL || "https://api.siliconflow.cn/v1",
@@ -59,12 +62,11 @@ export default defineNuxtConfig({
         // Hide Chatbot floating bubble on specific routes (exact match)
         // Control routes in config file as required
         bubbleHiddenRoutes: ["/", "/en", "/sp", "/zh-cn"],
-        // If true, backend will reject any edit/apply requests when client declares chat/ask mode
-        strictAskNoEdit: String(process.env.NUXT_PUBLIC_CHATBOT_STRICT_ASK_NO_EDIT ?? 'true').toLowerCase() !== 'false',
-        // For OpenAI compatible APIs, use full endpoint path for chat completions
-        // e.g. 'https://api.openai.com/v1/chat/completions'
-        // or 3rd party compatible base.
-        apiBase: `${(process.env.FASTAPI_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, '')}/api/ai`,
+        // Build chatbot API base: prefer absolute FASTAPI_BASE_URL if set, else relative path
+        // which works behind a reverse proxy (same-origin).
+        apiBase: (process.env.FASTAPI_BASE_URL
+          ? `${process.env.FASTAPI_BASE_URL.replace(/\/$/, '')}/api/ai`
+          : "/api/ai"),
         gpt5Extras: false, // include gpt-5 extras (verbosity/reasoning_effort) by default
         responseFormat: {
           enabled: false,
@@ -160,6 +162,7 @@ export default defineNuxtConfig({
         { rel: "mask-icon", href: "/safari-pinned-tab.svg", color: "#222" }
       ],
       meta: [
+        { charset: "utf-8" },
         { name: "viewport", content: "width=device-width, initial-scale=1" },
         { name: "application-name", content: "md_ai_cv" },
         { name: "apple-mobile-web-app-title", content: "md_ai_cv" },

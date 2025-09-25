@@ -49,7 +49,11 @@
             <span class="i-ph:spinner-gap-duotone animate-spin text-base" />
             <span>处理中...</span>
           </span>
-          <span v-else>降低AI率</span>
+          <span v-else>重写</span>
+        </button>
+        <button class="toolbar-icon-btn" :disabled="isLoading" @click="runLowerAiRate">
+          <span class="i-ph:magic-wand" />
+          <span>降低AI率</span>
         </button>
 
         <button class="toolbar-icon-btn" :disabled="isLoading" @click="copy">
@@ -238,6 +242,23 @@ const showPreview = ref(false);
 
 const previewText = ref('');
 const maxTokens = ref<number>(1024);
+// 固定用于“降低AI率”的提示词
+const LOWER_AI_RATE_PROMPT = `你来自non-English-speaking国家，你并非英语母语者，你的英文写作无法像英文母语者一样完美，但你会尽可能写出真情实感。请在完全保留正式文风、原文信息、论证顺序和段落边界的前提下，遵循以下写作原则：
+# 困惑度
+提高整体困惑度，避免重复模板化表达；
+适度引入同义词、近义词与多样化搭配，让语言显得天然且不规整。
+# 句式结构
+交替使用长短句，偶尔加入并列、倒装或省略，打破机器“一句一意”的呆板感；
+在关键转折或补充处使用自然衔接词（however, moreover, particularly等）。禁止使用破折号、引号。
+# 轻微混乱度
+在不影响逻辑清晰的前提下，偶尔添加较为口语化的表达；
+避免机械重复同一词或同一开头，体现“人写稿”常见的微杂糅感。
+# 保持语义边界
+任何事实、数据、结论都不得改动；
+段落顺序、论点论据映射保持一致；
+仅在修辞和用词层面做调整，不新增、删减核心信息。
+
+请用这种策略重写文本，输出不包含任何解释，只给最终润色后的内容。`;
 const effort = ref<'low' | 'medium' | 'high'>('medium');
 const originalSelection = ref('');
 const originalHtml = computed(() => escapeHtml(originalSelection.value || ''));
@@ -261,6 +282,22 @@ const setPosition = (x: number, y: number) => {
   const maxY = Math.max(margin, window.innerHeight - height - margin);
   pos.x = Math.min(Math.max(x, margin), maxX);
   pos.y = Math.min(Math.max(y, margin), maxY);
+};
+
+// “降低AI率”按钮：使用固定提示词
+const runLowerAiRate = async () => {
+  const input = props.getSelection();
+  if (!input || isLoading.value) return;
+  originalSelection.value = input;
+  try {
+    isLoading.value = true;
+    await runRequest(input, LOWER_AI_RATE_PROMPT);
+  } catch (e: any) {
+    console.error('[AiToolbar] 降低AI率失败:', e);
+    alert(`降低AI率失败: ${e.message || e}`);
+  } finally {
+    isLoading.value = false;
+  }
 };
 
 const updateFromSelection = () => {
@@ -501,7 +538,7 @@ ${input}`,
       return;
     }
 
-    await runLegacyAiOperation(input);
+    await runRequest(input, prompt.value);
   } catch (e: any) {
     console.error('[AiToolbar] AI操作失败:', e);
     alert(`AI操作失败: ${e.message || e}`);
@@ -510,15 +547,11 @@ ${input}`,
   }
 };
 
-const runLegacyAiOperation = async (input: string) => {
-
-  const examples = `Examples of formatting to preserve:\n- Bold: **text**\n- Italic: *text*\n- Code: \`code\`\n- Links: [text](url)\n- Images: ![alt](url)\n- Crossref: [~P1] and [~P1]: Definition\n- Headings: #, ##, ### prefixes\n- Lists: -, 1., >, : prefixes\nIf the selection contains formatting markers, keep the structure and only rewrite natural language text.`;
-
-
+const runRequest = async (input: string, promptText: string) => {
 
   const body = {
 
-    prompt: `${prompt.value}\n\n${examples}`,
+    prompt: String(promptText || ''),
 
     selection: input,
 

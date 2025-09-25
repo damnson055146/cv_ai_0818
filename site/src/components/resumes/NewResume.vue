@@ -655,14 +655,30 @@ const extractTextFromFile = async (): Promise<string> => {
   return ''
 }
 
+const isRecFileAllowed = (file: File): boolean => {
+  const raw = (recCfg.value.allowedUploadTypes as string[]) || []
+  const allowed = raw.map((t) => String(t).toLowerCase())
+  if (!allowed.length) return true
+  const mime = (file.type || '').toLowerCase()
+  const ext = `.${(file.name?.split('.')?.pop() || '').toLowerCase()}`
+  if (mime && allowed.includes(mime)) return true
+  if (ext && allowed.includes(ext)) return true
+  // Always allow PDF by extension or mime
+  if (ext === '.pdf' || mime === 'application/pdf') return true
+  // Common fallbacks when browsers set generic or empty types
+  if (ext === '.md' && allowed.includes('text/markdown')) return true
+  if (ext === '.txt' && allowed.includes('text/plain')) return true
+  if (ext === '.docx' && allowed.includes('application/vnd.openxmlformats-officedocument.wordprocessingml.document')) return true
+  if (ext === '.doc' && allowed.includes('application/msword')) return true
+  return false
+}
+
 const onRecSelect = async (e: Event) => {
   const input = e.target as HTMLInputElement
   const file = input?.files?.[0]
   if (!file) return
   try {
-    const okTypes = (recCfg.value.allowedUploadTypes as string[]) || []
-    const isPdfExt = /\.pdf$/i.test(file.name || '')
-    if (okTypes.length > 0 && !okTypes.includes(file.type) && !isPdfExt) {
+    if (!isRecFileAllowed(file)) {
       recBase64.value = null
       recName.value = ''
       ;(toast as any).import(false)
@@ -811,12 +827,36 @@ const confirmCreateRec = async () => {
       ;(window as any).__pendingChatMessages.unshift(marker)
     } catch {}
     const reqBody: any = { max_output_tokens: 8192, reasoning_effort: 'medium' }
+    // New unified create endpoint requires doc_type; also pass language
+    reqBody.doc_type = 'rec'
+    if (lang.value) reqBody.language = lang.value
     if (fileId) reqBody.file_ids = [fileId]
     if (recInitialText.value.trim()) reqBody.prompt = recInitialText.value.trim()
     setAgentStep('调用模型生成内容...')
-    const res: any = await $fetch(`${backendBase.value}/api/rec/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody })
+    const res: any = await $fetch(`${backendBase.value}/api/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody })
     // 仅提取 Structured Outputs 的 result，并将 "\n" 转义为真正的换行
     const unescapeNewlines = (t: string) => (t || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
+    const pickRecResultParts = (obj: any): { en: string; zh: string } => {
+      let en = ''
+      let zh = ''
+      try {
+        const r = obj?.result
+        if (typeof r === 'string') {
+          en = String(r || '')
+        } else if (r && typeof r === 'object') {
+          const inner = (r as any).result && typeof (r as any).result === 'object' ? (r as any).result : null
+          if (inner) {
+            en = String(inner.english_letter || inner.letter_en || inner.english || inner.english_text || '')
+            zh = String(inner.chinese_translation || inner.letter_zh || inner.chinese || inner.zh || inner.zh_cn || inner.cn || '')
+          }
+          if (!en && !zh) {
+            en = String((r as any).english_letter || (r as any).letter_en || (r as any).english_text || (r as any).english || (r as any).en || '')
+            zh = String((r as any).chinese_translation || (r as any).letter_zh || (r as any).chinese_letter || (r as any).chinese || (r as any).zh || (r as any).zh_cn || (r as any).cn || '')
+          }
+        }
+      } catch {}
+      return { en, zh }
+    }
     const pickResultString = (obj: any): string => {
       const r = obj?.result
       if (typeof r === 'string') return r
@@ -836,6 +876,8 @@ const confirmCreateRec = async () => {
     }
     setAgentStep('解析与整理结果...')
     let content = ''
+    let enCandidate = ''
+    let zhCandidate = ''
     let reasoningForChat = ''
     try {
       const raw = res?.raw
@@ -844,19 +886,45 @@ const confirmCreateRec = async () => {
           const parts = item?.content || []
           for (const p of parts) {
             if (p && typeof p.json === 'object' && p.json) {
-              const resultText = pickResultString(p.json)
+              const parts = pickRecResultParts(p.json)
               const rs = (p.json || {}).reasoning_summary
               if (typeof rs === 'string') reasoningForChat = rs
-              if (resultText) {
-                content = unescapeNewlines(resultText)
+              if (parts.en || parts.zh) {
+                enCandidate = parts.en
+                zhCandidate = parts.zh
+                content = unescapeNewlines([parts.en, parts.zh].filter(Boolean).join('\n\n'))
                 break outer
               }
             }
           }
         }
       }
+      // Fallback: parse backend output_text (JSON string) to extract english/chinese only
       if (!content && typeof res?.output_text === 'string' && res.output_text.trim()) {
-        content = unescapeNewlines(res.output_text.trim())
+        try {
+          const parsed = JSON.parse(res.output_text)
+          const parts = pickRecResultParts({ result: parsed?.result })
+          if (parts.en || parts.zh) {
+            enCandidate = parts.en
+            zhCandidate = parts.zh
+            content = unescapeNewlines([parts.en, parts.zh].filter(Boolean).join('\n\n'))
+          }
+          if (!reasoningForChat && typeof parsed?.reasoning_summary === 'string') reasoningForChat = parsed.reasoning_summary
+          if (!Array.isArray(res?.others?.steps) && Array.isArray(parsed?.steps)) {
+            (res as any).others = Object.assign({}, res?.others || {}, { steps: parsed.steps })
+          }
+        } catch {}
+      }
+    } catch {}
+    // If we only have English letter, try to translate to Chinese via backend
+    try {
+      if (enCandidate && !zhCandidate) {
+        const tr: any = await $fetch(`${backendBase.value}/api/translate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: { text: enCandidate, target: 'zh' } })
+        const zh = String(tr?.text || '').trim()
+        if (zh) {
+          zhCandidate = zh
+          content = unescapeNewlines([enCandidate, zhCandidate].join('\n\n'))
+        }
       }
     } catch {}
     // 将其他结构化部分与 reasoning_summary 写入 Chatbot 历史（使用 convStore 以确保页面装载后可见）
@@ -864,34 +932,75 @@ const confirmCreateRec = async () => {
       const { convStore } = await import('~/data/contextStore')
       const msgs: string[] = []
       const others = res?.others || {}
-      const mat = formatMaterial(others.material)
-      if (mat) msgs.push(`【素材提炼】\n${mat}`)
-      const out = formatOutline(others.outline)
-      if (out) msgs.push(`【写作大纲】\n${out}`)
-      const chk = formatChecks(others.checks)
-      if (chk) msgs.push(`【质量检查确认】\n${chk}`)
+      // Show evaluation blocks in chatbot messages
+      const pc = formatChecks(others.perspective_consistency)
+      if (pc) msgs.push(`【perspective_consistency】\n${pc}`)
+      const lq = formatChecks(others.language_quality)
+      if (lq) msgs.push(`【language_quality】\n${lq}`)
+      const cc = formatChecks(others.content_completeness)
+      if (cc) msgs.push(`【content_completeness】\n${cc}`)
+      const sl = formatChecks(others.structure_logic)
+      if (sl) msgs.push(`【structure_logic】\n${sl}`)
+      // missing_information from material
+      try {
+        const mi = (others as any)?.material?.missing_information
+        if (Array.isArray(mi) && mi.length) {
+          msgs.push(`【missing_information】\n- ${mi.map((x: any) => String(x)).join('\n- ')}`)
+        }
+      } catch {}
       const rs = reasoningForChat || (others.reasoning_summary || '')
       if (rs) msgs.push(`【推理摘要】\n${rs}`)
-      if (Array.isArray(others.steps) && others.steps.length) msgs.push(`【步骤】\n- ${others.steps.join('\n- ')}`)
+      // 统一由 Chatbot 的 CollapsibleList 自动折叠长列表
+      if (Array.isArray(others.steps) && others.steps.length) {
+        msgs.push(`【步骤】\n- ${others.steps.join('\n- ')}`)
+      }
+      // Fallback: if backend 'others' missing reasoning/steps, parse output_text JSON
+      try {
+        if (typeof res?.output_text === 'string' && res.output_text.trim()) {
+          const parsed = JSON.parse(res.output_text)
+          // If checks object present, append four categories when not already present
+          try {
+            const checks = parsed?.checks || null
+            if (checks && typeof checks === 'object') {
+              if (!msgs.some(m => m.startsWith('【perspective_consistency】')) && (checks.perspective_consistency || checks.perspectiveConsistency)) {
+                msgs.push(`【perspective_consistency】\n${formatChecks(checks.perspective_consistency || checks.perspectiveConsistency)}`)
+              }
+              if (!msgs.some(m => m.startsWith('【language_quality】')) && (checks.language_quality || checks.languageQuality)) {
+                msgs.push(`【language_quality】\n${formatChecks(checks.language_quality || checks.languageQuality)}`)
+              }
+              if (!msgs.some(m => m.startsWith('【content_completeness】')) && (checks.content_completeness || checks.contentCompleteness)) {
+                msgs.push(`【content_completeness】\n${formatChecks(checks.content_completeness || checks.contentCompleteness)}`)
+              }
+              if (!msgs.some(m => m.startsWith('【structure_logic】')) && (checks.structure_logic || checks.structureLogic)) {
+                msgs.push(`【structure_logic】\n${formatChecks(checks.structure_logic || checks.structureLogic)}`)
+              }
+            }
+          } catch {}
+          // Append missing_information when available
+          try {
+            const mi = parsed?.material?.missing_information
+            if (Array.isArray(mi) && mi.length && !msgs.some(m => m.startsWith('【missing_information】'))) {
+              msgs.push(`【missing_information】\n- ${mi.map((x: any) => String(x)).join('\n- ')}`)
+            }
+          } catch {}
+          const rs2 = (typeof parsed?.reasoning_summary === 'string') ? parsed.reasoning_summary : ''
+          if (rs2 && !msgs.some(m => m.startsWith('【推理摘要】'))) {
+            msgs.push(`【推理摘要】\n${rs2}`)
+          }
+          if (Array.isArray(parsed?.steps) && parsed.steps.length && !msgs.some(m => m.startsWith('【步骤】'))) {
+            msgs.push(`【步骤】\n- ${parsed.steps.join('\n- ')}`)
+          }
+        }
+      } catch {}
+      // Also send messages to Chatbot bubble (external append)
+      try { window.dispatchEvent(new CustomEvent('chatbot-append', { detail: { messages: msgs } })) } catch {}
       if (msgs.length) {
         // 先建文档，再将消息追加到该文档的 chatId（等于文档 id）
         // 注意：下面会在拿到 id 后 append
         ;(window as any).__pendingChatMessages = msgs
       }
     } catch {}
-    try {
-      const raw = res?.raw
-      if (!content && raw && Array.isArray(raw.output)) {
-        for (const item of raw.output) {
-          const parts = item?.content || []
-          for (const p of parts) {
-            if (p && typeof p.text === 'string') content += p.text
-            if (p && typeof p.json === 'object' && p.json && typeof p.json.result === 'string') content = p.json.result
-          }
-        }
-      }
-      if (!content && typeof raw?.reply === 'string') content = raw.reply
-    } catch {}
+    // No additional fallback: ensure editor only saves english_letter + chinese_translation
     setAgentStep('创建文档...')
     const id = await newResumeFromImport(content || '', recName.value.replace(/\.[^.]+$/, '') || 'Recommendation')
     try {
