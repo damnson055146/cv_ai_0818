@@ -97,6 +97,8 @@ This project has migrated AI endpoints from Node (Nuxt server routes) to a FastA
 - Set env:
   - `OPENAI_API_KEY=...`
   - optional: `AGENTS_FALLBACK_TO_PROXY=true`
+  - optional: `CV_AGENT_ID` / `PS_AGENT_ID` / `REC_AGENT_ID` if you want `/api/create` to use prebuilt OpenAI Agents
+  - optional: `REC_PROMPT_ID` / `REC_PROMPT_VERSION` to keep the recommendation flow mounted to a specific Prompt resource
 - Run:
   - `uvicorn backend_fastapi.app.main:app --host 0.0.0.0 --port 8000`
 
@@ -208,4 +210,3 @@ All system/user prompts are managed via a single SQLite table `prompts` (file: `
   - ACT append: `AGENT_ACT_APPEND_FILE_{CV|PS|REC}` → `AGENT_ACT_APPEND_FILE`
 
 Tip: Prefer editing from the UI “管理提示词” dialogs. For Chatbot-specific keys, use the Chatbot’s gear button; for all other keys (PS/Toolbar/REC), use the “管理提示词” buttons on the home and document pages (left of Save/Save As).
-

@@ -86,13 +86,13 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { useRuntimeConfig } from '#imports'
+import { resolveBackendBase } from '~/utils/backendBase'
 
 type DocType = 'cv'|'ps'|'rec'
 type Segment = 'system'|'append'|'session'
 
 const cfg = useRuntimeConfig()
-const backendBase: string = (cfg.public as any)?.backendBase || ''
-const apiBase = backendBase ? backendBase.replace(/\/$/, '') : ''
+const apiBase = resolveBackendBase((cfg.public as any)?.backendBase)
 
 const docTypes: DocType[] = ['cv','ps','rec']
 const candidates: Segment[] = ['system','append','session']

@@ -37,7 +37,20 @@ export default defineEventHandler(async (event) => {
       return text
     }
 
-    const getPrompt = async (key: string, fallback: string) => {\n      if (!backendBase) return fallback\n      try {\n        const url = ${backendBase.replace(/\\\/$/, '')}/api/prompts/\n        const r: any = await (url)\n        return (r && typeof r.value === 'string' && r.value) ? r.value : fallback\n      } catch { return fallback }\n    }\n\n    // 1) Build elements (素材整理)
+    const getPrompt = async (key: string, fallback: string) => {
+      if (!backendBase) return fallback
+      try {
+        const base = backendBase.replace(/\/$/, '')
+        const url = `${base}/api/prompts/${encodeURIComponent(key)}`
+        const r: any = await $fetch(url)
+        const value = (r && typeof r.value === 'string') ? r.value.trim() : ''
+        return value || fallback
+      } catch {
+        return fallback
+      }
+    }
+
+    // 1) Build elements (素材整理)
     const elementSystem = await getPrompt('ps_system_element', ['You are preparing materials for a Personal Statement (PS).','Summarize key elements strictly structured by sections: Motivation; Pre-Knowledge; Experience; Why Master\'s; Why This Program; Career Plan.','Return plain text with clear headings and bullet points. Do NOT fabricate info. Leave fields blank if unknown.', (language === 'zh' ? 'Language: Chinese (简体中文).' : 'Language: English.')].join(' '))
     const elementUser = [
       ps_requirement || '',
@@ -78,6 +91,5 @@ export default defineEventHandler(async (event) => {
     return { status: 'error', error: e?.message || 'seed-from-upload failed' }
   }
 })
-
 
 

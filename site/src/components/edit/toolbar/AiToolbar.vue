@@ -196,15 +196,18 @@
 
 <script lang="ts" setup>
 
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 import { useWorkspaceStore } from "~/composables/stores/workspace";
 
 import { useWorkspaceOperator, OperationType } from "~/composables/workspaceOperator";
+import { resolveBackendBase } from "~/utils/backendBase";
 
 
 
-const props = defineProps<{ getSelection: () => string; getSelectionRect: () => { x: number; y: number; visible: boolean }; applyText: (text: string) => void }>();
+type SelectionRect = { x: number; y: number; visible: boolean; height?: number };
+
+const props = defineProps<{ getSelection: () => string; getSelectionRect: () => SelectionRect; applyText: (text: string) => void }>();
 
 const root = ref<HTMLElement | null>(null);
 
@@ -217,10 +220,7 @@ const pos = reactive({ x: 0, y: 0 });
 const collapsed = ref(true);
 
 const runtimeConfig = useRuntimeConfig();
-const backendBase = computed(() => {
-  const raw = (runtimeConfig.public as any)?.backendBase || '';
-  return raw ? String(raw).replace(/\/$/, '') : '';
-});
+const backendBase = computed(() => resolveBackendBase((runtimeConfig.public as any)?.backendBase));
 
 const STORAGE_KEY = 'MR_AI_PROMPTS';
 
@@ -300,7 +300,7 @@ const runLowerAiRate = async () => {
   }
 };
 
-const updateFromSelection = () => {
+const updateFromSelection = async () => {
   if (skipSelectionUpdate) {
     skipSelectionUpdate = false;
     return;
@@ -308,7 +308,19 @@ const updateFromSelection = () => {
   const rect = props.getSelectionRect();
   visible.value = rect.visible;
   if (!rect.visible) return;
-  setPosition(rect.x, rect.y - 56);
+  await nextTick();
+  const margin = 16;
+  const toolbarHeight = root.value?.offsetHeight ?? 0;
+  const rectHeight = rect.height && rect.height > 0 ? rect.height : 24;
+  let targetY = rect.y - (toolbarHeight || 0) - margin;
+  if (!toolbarHeight) targetY = rect.y - 64;
+  if (toolbarHeight && targetY < margin) {
+    targetY = rect.y + rectHeight + margin;
+  }
+  if (!toolbarHeight && targetY < margin) {
+    targetY = rect.y + rectHeight + margin;
+  }
+  setPosition(rect.x, targetY);
 };
 
 
@@ -1055,9 +1067,6 @@ function escapeHtml(text: string): string {
 }
 
 </style>
-
-
-
 
 
 

@@ -48,8 +48,10 @@
 </template>
 
 <script lang="ts" setup>
+import { resolveBackendBase } from "~/utils/backendBase";
+
 const runtime = useRuntimeConfig()
-const backendBase: string = (runtime.public as any)?.backendBase || ''
+const backendBase = resolveBackendBase((runtime.public as any)?.backendBase)
 const convertToMdApi = backendBase ? backendBase.replace(/\/$/, '') + '/api/convert-to-md' : '/api/convert-to-md'
 import * as fileUpload from "@zag-js/file-upload";
 import { normalizeProps, useMachine } from "@zag-js/vue";

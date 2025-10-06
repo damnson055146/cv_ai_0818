@@ -33,12 +33,44 @@
             <div class="grid grid-cols-2 gap-3">
               <button
                 :class="['px-3 py-2 rounded border hover:border-darker-c hover:bg-dark-c', lang === 'en' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-c']"
-                @click="(curDoc === 'ps' || curDoc === 'rec') ? setLang('en') : createBy(curDoc, 'en')"
+                @click="(curDoc === 'ps' || curDoc === 'rec' || curDoc === 'cv') ? setLang('en') : createBy(curDoc, 'en')"
               >English</button>
               <button
                 :class="['px-3 py-2 rounded border hover:border-darker-c hover:bg-dark-c', lang === 'zh' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-c']"
-                @click="(curDoc === 'ps' || curDoc === 'rec') ? setLang('zh') : createBy(curDoc, 'zh')"
+                @click="(curDoc === 'ps' || curDoc === 'rec' || curDoc === 'cv') ? setLang('zh') : createBy(curDoc, 'zh')"
               >中文</button>
+            </div>
+          </div>
+
+          <div v-if="curDoc === 'cv'" id="cv-create" class="mt-4 space-y-3">
+            <div class="rounded-lg border border-c bg-dark-c p-4 space-y-3">
+              <div class="flex items-center justify-between text-sm font-medium text-light-c">
+                <span>上传素材（{{ cvCfg.requireUpload ? '必需' : '可选' }}）</span>
+                <span class="text-xs text-light-c opacity-70">支持 PDF / MD / TXT / DOC / DOCX</span>
+              </div>
+              <input type="file" :accept="acceptedCvTypes" @change="onCvSelect" />
+              <div v-if="cvName" class="text-xs text-light-c">已选择：{{ cvName }}</div>
+            </div>
+            <div class="space-y-1 cv-upload-block">
+              <label class="text-xs text-light-c">输入信息（可选）</label>
+              <textarea
+                v-model.trim="cvInitialText"
+                rows="4"
+                class="w-full px-3 py-2 rounded border border-c bg-transparent outline-none focus:border-brand transition"
+                placeholder="例如：个人背景、教育经历亮点、关键项目、技能要点等"
+              />
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-c">
+              <button
+                type="button"
+                class="text-xs text-light-c opacity-80 hover:text-brand transition"
+                :disabled="cvSubmitting"
+                @click="createTemplateCv"
+              >直接使用默认模板</button>
+              <div class="ml-auto flex gap-2">
+                <button class="px-3 py-1 rounded bg-gray-200 dark:bg-gray-600" :disabled="cvSubmitting" @click="resetDialog">取消</button>
+                <button class="px-3 py-1 rounded bg-blue-600 text-white hover:opacity-90" :disabled="!canConfirm || cvSubmitting" @click="confirmCreateCv">确定</button>
+              </div>
             </div>
           </div>
 
@@ -126,9 +158,8 @@
           <div v-if="curDoc === 'rec'" id="rec-create" class="mt-4 space-y-2">
             <div text-sm text-light-c>推荐信素材上传</div>
             <div class="space-y-1">
-              <label class="text-xs text-light-c">上传文件（必需）</label>
+              <label class="text-xs text-light-c">上传文件（{{ recCfg.requireUpload ? '必需' : '可选' }}）</label>
               <input type="file" :accept="acceptedRecTypes" @change="onRecSelect" />
-              <label class="text-xs text-light-c rec-optional-label">上传文件（可选）</label>
               <div v-if="recName" class="text-xs text-light-c">已选择：{{ recName }}</div>
             </div>
             <div class="space-y-1 rec-upload-block">
@@ -148,7 +179,7 @@
           
           <!-- 全局加载遮罩：新建文档时调用 Agent 显示动画 -->
           <div
-            v-if="psSubmitting || recSubmitting"
+            v-if="psSubmitting || recSubmitting || cvSubmitting"
             class="absolute inset-0 z-50 flex items-center justify-center rounded-md bg-black/30 backdrop-blur-sm"
             aria-live="polite"
           >
@@ -167,20 +198,41 @@
 </template>
 
 <script lang="ts" setup>
+import { resolveBackendBase } from "~/utils/backendBase";
+
 const runtimeConfig = useRuntimeConfig()
-const backendBase = computed(() => String((runtimeConfig.public as any)?.backendBase || '').replace(/\/$/, ''))
-const psCfg = computed(() => (runtimeConfig.public as any)?.ps || { requireUpload: false, allowedUploadTypes: ["application/pdf"] })
-const recCfg = computed(() => (runtimeConfig.public as any)?.rec || { requireUpload: false, allowedUploadTypes: ["application/pdf"] })
+const backendBase = computed(() => resolveBackendBase((runtimeConfig.public as any)?.backendBase))
+const defaultAllowedUploadTypes = [
+  'application/pdf',
+  'text/plain',
+  'text/markdown',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.pdf',
+  '.txt',
+  '.md',
+  '.doc',
+  '.docx'
+]
+const psCfg = computed(() => (runtimeConfig.public as any)?.ps || { requireUpload: false, allowedUploadTypes: defaultAllowedUploadTypes })
+const cvCfg = computed(() => (runtimeConfig.public as any)?.cv || { requireUpload: false, allowedUploadTypes: defaultAllowedUploadTypes })
+const recCfg = computed(() => (runtimeConfig.public as any)?.rec || { requireUpload: false, allowedUploadTypes: defaultAllowedUploadTypes })
 const psAllowedTypes = computed(() => {
   const list = Array.isArray(psCfg.value.allowedUploadTypes) && psCfg.value.allowedUploadTypes.length > 0
     ? psCfg.value.allowedUploadTypes
-    : ['application/pdf']
+    : defaultAllowedUploadTypes
   const normalized = list.map(t => String(t).toLowerCase())
   if (!normalized.includes('application/pdf')) normalized.push('application/pdf')
   if (!normalized.includes('.pdf')) normalized.push('.pdf')
   return Array.from(new Set(normalized))
 })
 const acceptedTypes = computed(() => psAllowedTypes.value.join(','))
+const acceptedCvTypes = computed(() => {
+  const types = Array.isArray(cvCfg.value.allowedUploadTypes) && cvCfg.value.allowedUploadTypes.length > 0
+    ? cvCfg.value.allowedUploadTypes.join(',')
+    : defaultAllowedUploadTypes.join(',')
+  return types.includes('.pdf') ? types : `${types},.pdf`
+})
 const uploadFileSummary = computed(() => {
   if (!uploadFile.value) return ''
   const parts: string[] = []
@@ -192,7 +244,7 @@ const uploadFileSummary = computed(() => {
 const acceptedRecTypes = computed(() => {
   const types = Array.isArray(recCfg.value.allowedUploadTypes) && recCfg.value.allowedUploadTypes.length > 0
     ? recCfg.value.allowedUploadTypes.join(',')
-    : 'application/pdf'
+    : defaultAllowedUploadTypes.join(',')
   // Always allow .pdf extension as fallback for browsers that set generic mime types
   return types.includes('.pdf') ? types : `${types},.pdf`
 })
@@ -221,6 +273,7 @@ const lang = ref<Lang | null>(null)
 const projectInfo = ref("")
 const studentInfo = ref("")
 const initialText = ref("")
+const cvInitialText = ref("")
 const recInitialText = ref("")
 const uploadInputRef = ref<HTMLInputElement | null>(null)
 const uploadFile = ref<UploadPayload | null>(null)
@@ -228,9 +281,12 @@ const uploadParsing = ref(false)
 const psSubmitting = ref(false)
 const agentStep = ref<string>("")
 const setAgentStep = (msg: string) => { agentStep.value = msg }
+const cvBase64 = ref<string | null>(null)
+const cvName = ref<string>("")
 const recBase64 = ref<string | null>(null)
 const recName = ref<string>("")
 const recSubmitting = ref<boolean>(false)
+const cvSubmitting = ref<boolean>(false)
 
 const setLang = (l: Lang) => { lang.value = l }
 const canConfirm = computed(() => {
@@ -247,9 +303,18 @@ const canConfirm = computed(() => {
   if (curDoc.value === 'rec') {
     if (!lang.value) return false
     const hasFile = !!recBase64.value
-    const hasText = Boolean(recInitialText.value?.trim?.() || '')
-    if (recCfg.value.requireUpload) return hasFile
-    return hasFile || hasText
+    const hasText = Boolean(recInitialText.value.trim())
+    if (recCfg.value.requireUpload && !hasFile) return false
+    if (!hasFile && !hasText) return false
+    return true
+  }
+  if (curDoc.value === 'cv') {
+    if (!lang.value) return false
+    const hasFile = !!cvBase64.value
+    const hasText = Boolean(cvInitialText.value.trim())
+    if (cvCfg.value.requireUpload && !hasFile) return false
+    if (!hasFile && !hasText) return false
+    return true
   }
   return true
 })
@@ -261,10 +326,14 @@ const resetDialog = () => {
   projectInfo.value = ''
   studentInfo.value = ''
   initialText.value = ''
+  cvInitialText.value = ''
   uploadFile.value = null
   uploadParsing.value = false
   psSubmitting.value = false
   if (uploadInputRef.value) uploadInputRef.value.value = ''
+  cvBase64.value = null
+  cvName.value = ''
+  cvSubmitting.value = false
   recBase64.value = null
   recName.value = ''
   recInitialText.value = ''
@@ -447,6 +516,13 @@ const confirmCreate = async () => {
   }
 
   if (outlineId) router.push(localePath(`/edit/${outlineId}`))
+}
+
+const createTemplateCv = async () => {
+  if (curDoc.value !== 'cv') return
+  const targetLang = lang.value
+  if (!targetLang) return
+  await createBy('cv', targetLang)
 }
 
 const readFileAsDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
@@ -655,6 +731,44 @@ const extractTextFromFile = async (): Promise<string> => {
   return ''
 }
 
+const isCvFileAllowed = (file: File): boolean => {
+  const raw = (cvCfg.value.allowedUploadTypes as string[]) || []
+  const allowed = raw.map((t) => String(t).toLowerCase())
+  if (!allowed.length) return true
+  const mime = (file.type || '').toLowerCase()
+  const ext = `.${(file.name?.split('.')?.pop() || '').toLowerCase()}`
+  if (mime && allowed.includes(mime)) return true
+  if (ext && allowed.includes(ext)) return true
+  if (ext === '.pdf' || mime === 'application/pdf') return true
+  if (ext === '.md' && allowed.includes('text/markdown')) return true
+  if (ext === '.txt' && allowed.includes('text/plain')) return true
+  if (ext === '.docx' && allowed.includes('application/vnd.openxmlformats-officedocument.wordprocessingml.document')) return true
+  if (ext === '.doc' && allowed.includes('application/msword')) return true
+  return false
+}
+
+const onCvSelect = async (e: Event) => {
+  const input = e.target as HTMLInputElement
+  const file = input?.files?.[0]
+  if (!file) return
+  try {
+    if (!isCvFileAllowed(file)) {
+      cvBase64.value = null
+      cvName.value = ''
+      ;(toast as any).import(false)
+      return
+    }
+  } catch {}
+  cvName.value = file.name || 'attachment.bin'
+  const reader = new FileReader()
+  reader.onload = () => {
+    const res = typeof reader.result === 'string' ? reader.result : ''
+    const comma = res.indexOf(',')
+    cvBase64.value = comma >= 0 ? res.slice(comma + 1) : res
+  }
+  reader.readAsDataURL(file)
+}
+
 const isRecFileAllowed = (file: File): boolean => {
   const raw = (recCfg.value.allowedUploadTypes as string[]) || []
   const allowed = raw.map((t) => String(t).toLowerCase())
@@ -794,9 +908,332 @@ const formatChecks = (checks: any): string => {
   return safeString(source)
 }
 
+const confirmCreateCv = async () => {
+  if (curDoc.value !== 'cv' || !lang.value) return
+  const promptText = cvInitialText.value.trim()
+  const hasFile = !!cvBase64.value
+  if (!hasFile && !promptText) {
+    ;(toast as any).import(false)
+    return
+  }
+  cvSubmitting.value = true
+  setAgentStep('准备生成简历...')
+  try {
+    const uploadUrl = backendBase.value ? `${backendBase.value}/api/files/upload` : '/api/files/upload'
+    let fileId: string | null = null
+    if (cvBase64.value) {
+      setAgentStep('上传附件...')
+      const up: any = await $fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: { name: cvName.value || 'upload.bin', contentBase64: cvBase64.value, purpose: 'user_data' }
+      })
+      if (!up || up.status !== 'ok' || !up.file || !up.file.id) throw new Error('upload_failed')
+      fileId = up.file.id as string
+    }
+
+    // 附件占位，便于 Chatbot 侧展示
+    try {
+      if (fileId) {
+        const name = cvName.value || 'upload.bin'
+        const lower = name.toLowerCase()
+        const mime = /\.pdf$/.test(lower) ? 'application/pdf'
+          : /\.docx$/.test(lower) ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          : /\.doc$/.test(lower) ? 'application/msword'
+          : /\.md$/.test(lower) ? 'text/markdown'
+          : /\.txt$/.test(lower) ? 'text/plain'
+          : ''
+        const payload = { images: [], files: [{ id: fileId, name, mime }] }
+        const marker = '[[ATTACHMENTS]]' + JSON.stringify(payload)
+        const pending = Array.isArray((window as any).__pendingChatMessages)
+          ? (window as any).__pendingChatMessages
+          : ((window as any).__pendingChatMessages = [])
+        pending.unshift(marker)
+      }
+    } catch {}
+
+    const reqBody: any = {
+      doc_type: 'cv',
+      max_output_tokens: 8192,
+      reasoning_effort: 'medium',
+      template_key: buildTemplateKey('cv', lang.value)
+    }
+    if (lang.value) reqBody.language = lang.value
+    if (fileId) reqBody.file_ids = [fileId]
+    if (promptText) reqBody.prompt = promptText
+
+    setAgentStep('调用模型生成简历...')
+    const createUrl = backendBase.value ? `${backendBase.value}/api/cv/create` : '/api/cv/create'
+    const res: any = await $fetch(createUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: reqBody
+    })
+
+    setAgentStep('解析与整理结果...')
+    const unescapeNewlines = (t: string) => (t || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
+    const digResult = (source: any): { markdown: string; name?: string } => {
+      let markdown = ''
+      let name = ''
+      const pickMarkdown = (text: any): string => {
+        if (typeof text !== 'string') return ''
+        const trimmed = text.trim()
+        if (!trimmed) return ''
+        // Heuristic: prefer multi-line or heading-style strings to avoid grabbing plain labels
+        const looksStructured = /\n/.test(trimmed) || /^#{1,3}\s/.test(trimmed)
+        return looksStructured ? trimmed : ''
+      }
+      const tryAssign = (val: any) => {
+        if (!val) return
+        if (typeof val === 'string' && val.trim()) {
+          if (!markdown) {
+            const picked = pickMarkdown(val)
+            if (picked) markdown = picked
+          }
+          return
+        }
+        if (typeof val === 'object') {
+          const directCandidates = [
+            (val as any).english_letter,
+            (val as any).letter_en,
+            (val as any).english_text,
+            (val as any).english,
+            (val as any).en,
+            (val as any).result?.english_letter,
+            (val as any).result?.letter_en,
+            (val as any).result?.english_text,
+            (val as any).result?.english,
+            (val as any).result?.en
+          ]
+          for (const candidate of directCandidates) {
+            if (markdown) break
+            const picked = pickMarkdown(candidate)
+            if (picked) markdown = picked
+          }
+          if (markdown) return
+          const mdKeys = [
+            'markdown',
+            'resume_markdown',
+            'cv_markdown',
+            'resume',
+            'cv',
+            'content',
+            'text',
+            'body',
+            'english_letter',
+            'letter_en',
+            'english_text',
+            'english',
+            'en'
+          ]
+          for (const key of mdKeys) {
+            const candidate = (val as any)[key]
+            if (typeof candidate === 'string' && candidate.trim()) {
+              if (!markdown) {
+                const picked = pickMarkdown(candidate)
+                if (picked) markdown = picked
+              }
+            }
+          }
+          const nameKeys = ['name', 'title', 'filename', 'document_name']
+          for (const key of nameKeys) {
+            const n = (val as any)[key]
+            if (typeof n === 'string' && n.trim()) {
+              if (!name) name = n.trim()
+            }
+          }
+          if ((val as any).result) tryAssign((val as any).result)
+          if (Array.isArray(val)) {
+            for (const item of val) {
+              if (markdown) break
+              tryAssign(item)
+            }
+          } else {
+            for (const key of Object.keys(val)) {
+              if (markdown) break
+              if (key === 'result') continue
+              tryAssign((val as any)[key])
+            }
+          }
+        }
+      }
+      tryAssign(source)
+      return { markdown, name }
+    }
+
+    let markdown = ''
+    let resumeName = ''
+    let reasoningForChat = ''
+    let others: any = {}
+
+    const directResult = typeof res?.result === 'string' ? res.result.trim() : ''
+    if (directResult) {
+      markdown = unescapeNewlines(directResult)
+      const headingMatch = markdown.match(/^##+\s*(.+)$/m)
+      if (headingMatch) resumeName = headingMatch[1].trim()
+    } else {
+      others = res?.others || {}
+    }
+
+    if (!markdown) {
+      try {
+        const fromOthers = digResult(others?.result)
+        if (fromOthers.markdown) markdown = fromOthers.markdown
+        if (fromOthers.name) resumeName = fromOthers.name
+        if (typeof others.reasoning_summary === 'string') reasoningForChat = others.reasoning_summary
+
+        if (!markdown && typeof res?.output_text === 'string' && res.output_text.trim()) {
+          const rawText = res.output_text.trim()
+          if (/^[\[{]/.test(rawText)) {
+            try {
+              const parsed = JSON.parse(rawText)
+              const extracted = digResult(parsed?.result ?? parsed)
+              if (extracted.markdown) markdown = extracted.markdown
+              if (!resumeName && extracted.name) resumeName = extracted.name
+              if (!reasoningForChat && typeof parsed?.reasoning_summary === 'string') reasoningForChat = parsed.reasoning_summary
+              if (!others.steps && Array.isArray(parsed?.steps)) {
+                (res as any).others = Object.assign({}, others || {}, { steps: parsed.steps })
+                others = (res as any).others
+              }
+            } catch {
+              markdown = rawText
+            }
+          } else {
+            markdown = rawText
+          }
+        }
+
+        if (!markdown) {
+          const rawOut = String(res?.raw?.output_text || '').trim()
+          if (rawOut) {
+            if (/^[\[{]/.test(rawOut)) {
+              try {
+                const parsed = JSON.parse(rawOut)
+                const extracted = digResult(parsed?.result ?? parsed)
+                if (extracted.markdown) markdown = extracted.markdown
+                if (!resumeName && extracted.name) resumeName = extracted.name
+                if (!reasoningForChat && typeof parsed?.reasoning_summary === 'string') reasoningForChat = parsed.reasoning_summary
+              } catch {
+                markdown = rawOut
+              }
+            } else {
+              markdown = rawOut
+            }
+          }
+        }
+
+        if (!markdown) {
+          const raw = res?.raw
+          if (raw && Array.isArray(raw.output)) {
+            outer: for (const item of raw.output) {
+              const parts = item?.content || []
+              for (const p of parts) {
+                if (p && typeof p.json === 'object' && p.json) {
+                  const extracted = digResult(p.json)
+                  if (extracted.markdown) {
+                    markdown = extracted.markdown
+                    if (!resumeName && extracted.name) resumeName = extracted.name
+                    break outer
+                  }
+                }
+                if (p && typeof p.text === 'string' && p.text.trim()) {
+                  markdown = p.text.trim()
+                  break outer
+                }
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
+    markdown = unescapeNewlines(markdown || '').trim()
+    if (!resumeName && markdown) {
+      const headingMatch = markdown.match(/^##+\s*(.+)$/m)
+      if (headingMatch) resumeName = headingMatch[1].trim()
+    }
+    if (!markdown) throw new Error('no_content')
+
+    const detailMessages: string[] = []
+    const materialMsg = formatMaterial(others.material)
+    if (materialMsg) detailMessages.push(`【material】\n${materialMsg}`)
+    const outlineMsg = formatOutline(others.outline)
+    if (outlineMsg) detailMessages.push(`【outline】\n${outlineMsg}`)
+    const checksMsg = formatChecks(others.checks)
+    if (checksMsg) detailMessages.push(`【checks】\n${checksMsg}`)
+    try {
+      const missing = (others as any)?.material?.missing_information
+      if (Array.isArray(missing) && missing.length) {
+        detailMessages.push(`【missing_information】\n- ${missing.map((x: any) => String(x)).join('\n- ')}`)
+      }
+    } catch {}
+    if (reasoningForChat) detailMessages.push(`【推理摘要】\n${reasoningForChat}`)
+    if (Array.isArray(others.steps) && others.steps.length) {
+      detailMessages.push(`【步骤】\n- ${others.steps.join('\n- ')}`)
+    }
+
+    try {
+      if (typeof res?.output_text === 'string' && res.output_text.trim()) {
+        try {
+          const parsed = JSON.parse(res.output_text)
+          if (!reasoningForChat && typeof parsed?.reasoning_summary === 'string') {
+            reasoningForChat = parsed.reasoning_summary
+            if (reasoningForChat && !detailMessages.some(m => m.startsWith('【推理摘要】'))) {
+              detailMessages.push(`【推理摘要】\n${reasoningForChat}`)
+            }
+          }
+          if (parsed?.checks && !detailMessages.some(m => m.startsWith('【checks】'))) {
+            const msg = formatChecks(parsed.checks)
+            if (msg) detailMessages.push(`【checks】\n${msg}`)
+          }
+          if (Array.isArray(parsed?.steps) && parsed.steps.length && !detailMessages.some(m => m.startsWith('【步骤】'))) {
+            detailMessages.push(`【步骤】\n- ${parsed.steps.join('\n- ')}`)
+          }
+        } catch {}
+      }
+    } catch {}
+
+    try {
+      if (detailMessages.length) {
+        try { window.dispatchEvent(new CustomEvent('chatbot-append', { detail: { messages: detailMessages } })) } catch {}
+        const pending = Array.isArray((window as any).__pendingChatMessages)
+          ? (window as any).__pendingChatMessages
+          : ((window as any).__pendingChatMessages = [])
+        pending.push(...detailMessages)
+      }
+    } catch {}
+
+    setAgentStep('创建文档...')
+    const cleanName = resumeName || (cvName.value ? cvName.value.replace(/\.[^.]+$/, '') : '') || 'Resume'
+    const id = await newResumeFromImport(markdown, cleanName)
+    try {
+      const msgs: string[] = Array.isArray((window as any).__pendingChatMessages) ? (window as any).__pendingChatMessages : []
+      if (msgs.length) {
+        const { convStore } = await import('~/data/contextStore')
+        for (const m of msgs) convStore.appendMessage(id, 'assistant', m)
+        ;(window as any).__pendingChatMessages = []
+      }
+    } catch {}
+
+    try { localStorage.setItem('doc_meta_' + id, JSON.stringify({ docType: 'cv', lang: lang.value })) } catch {}
+    setAgentStep('跳转编辑器...')
+    router.push(localePath(`/edit/${id}`))
+  } catch (error) {
+    console.error('[CV Create] failed', error)
+    ;(toast as any).import(false)
+  } finally {
+    cvSubmitting.value = false
+    setAgentStep('')
+  }
+}
+
 const confirmCreateRec = async () => {
   if (curDoc.value !== 'rec' || !lang.value) return
-  if (!recBase64.value && !recInitialText.value.trim()) return
+  if (recCfg.value.requireUpload && !recBase64.value) return
+  if (!recBase64.value && !recInitialText.value.trim()) {
+    ;(toast as any).import(false)
+    return
+  }
   recSubmitting.value = true
   setAgentStep('准备生成推荐信...')
   try {
@@ -1022,12 +1459,3 @@ const confirmCreateRec = async () => {
   }
 }
 </script>
-
-<style scoped>
-#rec-create .rec-upload-block > label:first-child {
-  display: none;
-}
-#rec-create .rec-upload-block .rec-optional-label {
-  display: inline-block;
-}
-</style>

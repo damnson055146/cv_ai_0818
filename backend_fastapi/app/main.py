@@ -7,7 +7,11 @@ import-time decoding errors. All long prompts should be stored in DB.
 from __future__ import annotations
 
 import os
+import json
+import re
 from typing import Any
+
+import logging
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -35,18 +39,99 @@ app.include_router(agent_router)
 
 
 # CORS for frontend dev (Nuxt at :3000)
-_cors_origins_env = os.getenv("FASTAPI_CORS_ALLOW_ORIGINS", "").strip()
-if _cors_origins_env:
-    _origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
-else:
-    _origins = [
-        "http://127.0.0.1:3000",
-        "http://localhost:3000",
-    ]
+# Expand simple host entries (e.g. "example.com" or "example.com:3000")
+# into both http:// and https:// variants to reduce CORS misconfiguration.
+def _expand_cors_token(token: str) -> list[str]:
+    token = token.strip()
+    if not token:
+        return []
+    if token == "*":
+        return ["*"]
+    token = token.rstrip("/")
+    lowered = token.lower()
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        return [token]
+    if lowered.startswith("//"):
+        host = token[2:]
+    else:
+        host = token
+    host = host.lstrip("/")
+    if not host:
+        return []
+    return [f"http://{host}", f"https://{host}"]
+
+
+def _load_cors_origins(env_value: str | None) -> list[str]:
+    value = (env_value or "").strip()
+    if not value:
+        return []
+    seen: set[str] = set()
+    expanded: list[str] = []
+    for raw in value.split(","):
+        for item in _expand_cors_token(raw):
+            normalized = item.strip()
+            if not normalized:
+                continue
+            if normalized == "*":
+                return ["*"]
+            if normalized not in seen:
+                seen.add(normalized)
+                expanded.append(normalized)
+    return expanded
+
+
+_cors_origins_env = os.getenv("FASTAPI_CORS_ALLOW_ORIGINS", "")
+_default_cors_tokens = "127.0.0.1:3000,localhost:3000,101.201.60.17:3000"
+_default_origins = _load_cors_origins(_default_cors_tokens)
+_origins = _load_cors_origins(_cors_origins_env) or _default_origins
+_allow_credentials = True
+_allow_origin_regex = None
+if "*" in _origins:
+    # Switch to regex mode so we can echo the request origin even with
+    # allow_credentials enabled. FastAPI will reject "*" + credentials, so
+    # we keep the broad match via regex instead.
+    _allow_origin_regex = ".*"
+    _origins = []
+
+_logger = logging.getLogger("uvicorn.error")
+try:
+    _logger.info(
+        "Loaded CORS allow_origins=%s allow_origin_regex=%s allow_credentials=%s",
+        _origins,
+        _allow_origin_regex,
+        _allow_credentials,
+    )
+except Exception:
+    pass
+
+def _init_rec_logger() -> logging.Logger:
+    logger = logging.getLogger("rec.create")
+    logger.setLevel(logging.INFO)
+    if logger.handlers:
+        return logger
+    log_path = os.getenv("REC_CREATE_LOG_PATH", "").strip()
+    try:
+        if not log_path:
+            here = os.path.dirname(__file__)
+            repo_root = os.path.abspath(os.path.join(here, "..", ".."))
+            log_dir = os.path.join(repo_root, "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, "rec_create.log")
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        logger.addHandler(handler)
+    except Exception:
+        logger = _logger
+        _logger.warning("rec_create log setup failed", exc_info=True)
+    return logger
+
+
+_rec_logger = _init_rec_logger()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
-    allow_credentials=True,
+    allow_origin_regex=_allow_origin_regex,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -171,28 +256,37 @@ def get_rec_prompt() -> str:
 
 # ---- Recommendation creation (REC) ----
 
-def _read_rec_create_prompt() -> str:
-    """Hardcoded REC creation prompt (base64-encoded UTF-8)."""
-    import base64
-    REC_PROMPT_B64 = (
-        """
-IyMg55GZ5o6V5aOK54C55rCr566fDQoNCua1o+eKs+anuOa2k+KCrOa1o+W2h+eyoealoOWxvOi1tOeAteWygOaukSoq6Y6644So5bSY5rWcPyrplJvlsoDnsqHnlK/plZDotJ/mtaPnirPluLTnkZnvuYHnuYPpkKjli6vuhJ/pkKLnhrjmjLXpjZDmrJHniLrnu4zliYHmlZPpkKLlrqDuh6zpjrrjhKjltJjmt4fCsOKCrOWCmee2mOa2k+ODpueJuOmWrOmdm+aDiumOuuOEqOW0mOa1nOm4v+6di+eRmeaOnue0sCoq5rWg5ZGt54aA5rWc5bqd57+w6ZCq5YW85aKN55GZ5L214oKs5L2357+w6Z+s7oKh57Cw6Y2U44Sm5Z6o6ZCp5a2Y5bi06Y2P7oSA57SR54Ge5pug44GaKirpkKjli6vuhJ/pkKLnhrvjgIPpkJzmi4znuZjnkJvlsoPnmI7mtaDlh6TntJ3nvIHmv4XnrInlqJHlpIrlvLfpj4PnirPnobbnkZnlgprnmYLpjZLmia7mrpHpjZDlkbTlhLTnvIHll5rlpq3pjrTmoKvunYbngLXll5Xkv4rpjq3uiJjigqw/Cg0KIyMg6Y+N56i/57i+5rWg6K+y5aefDQoNCumNqei9sOewrOadiOaSs+WPhua3h+KEg+S8hemUm+WxvuWvnOWuuOODpOe2lOWotOS9uuKWvOeAueWxvuWemumUm+awseekjOmPieaEreaao+mQnj/piKs/5r620YXnv7Dpj4vli6zigqw/6YirP+mRu+i+qOaeg+mOuuOEqOW0mOa3h+KEg+aMtemNkD8KDQojIyDpjrrjhKjltJjmt4figLPllZPmtaPmu4jul5Ppj40/Cg0KIyMjIDEuIOeSh+6FoeKWiOmRt+6BhuWKp+aQtO+4veW9gemNlz8KDQoqICoq55KH5baG55y55r625rCt54mx6Y2WPyrplJvmsKvlqIfpkKLjhKXmgpPmtpTlpI7nmJ3pjZzlsoPnuY7mtpTlpI7nmJ3pj4flpLjllKzplrLltoXumLLnkJvjhKjmj6rplJvlsoTkvKnpjY/ltobEgemPieWeruWvsumQpeaboeaKlw0KKiAqKueQm+OEqOaPqueBnuWCm+6CvOa2k+adv+eYnCoq6ZSb5rCs5rmq5reH5r+H5a+U5raT5pKy56yf6Y6s0YXmrpHpjZPltoblvYHmtpPlrLbntJ3plqvlgprntovmtaPot6jmlaTpj4Pjg6XniLbnkofltobnnLnplJvlsoPuhoDnkofuhaHilojpj4fno4vlmpzpkJI/CiogKirlr7Duhrzum77pjZnmqLrlr7LpjrA/KumUm+awq+e2i+mQnOaJrua5oea1nOWThOWVk+a1o+a7heaukemRt+6BhuWKp+a2k+W2heeVrOe8h+W6r+e0nemWrOWeruWOpOadqeWbpuewrOWuuOODpuaao+mQqOWLrOa6gOmNo+OEpuWKhQ0KKiAqKumPgeasj+6En+eRmeWCmueZgumNme+9heaDoioq6ZSb5rCs5Y+P57uL6IOv5Zqc6ZCS5oOw54C66Y2PP+mIpT/mvrbli6jigqzmu4TmmoDnlK/loKPuhofouYfll5vmlYvpkJDlhYnigqzmv4blvZ7lr67lv6XntJ3mtaDjg6XuloPlr67ovbDmsYnpjq/lka3mh5fmtpPluqHlvbLmt4figLPlrrPplJvloJ3um6cgKumIpea3miBzdGlsbCByZW1lbWJlciBob3cgc2hlIGJyb3VnaHQgaGVyIGRyYWZ0cyB3ZWVrIGFmdGVyIHdlZWsg6Yil77i54oKsP+mKhj/piKXmt7JoYXQgaW1wcmVzc2VkIG1lIG1vc3Qgd2FzIG5vdCBvbmx5IHRoZSByZXN1bHQgYnV0IGFsc28gaGVyIHN0ZWFkeSBpbXByb3ZlbWVudC7piKU/6ZSb5aSb57Sd5rWj5Zeb5Lyp6Y2P5baG5LqS6ZCi44SmxIHpj4nlnq7lr7LnkJvjhKjmj6oNCg0KIyMjIDIuIOmNmeODpee0oee8geaStOeAr+a1vOaouuWvsg0KDQoqICoq6ZeA6Leo54Wt6Y2Z44Ok5rCm6Y+HPyrplJvmsLHkvJLlqLLmmI/nuY3pkKLjhKfnlZ3pjZfmm57lvZ7piobkvbjumLLpjZrloJ3lvZ7pjZzlsb3oi5/pjZLmpYDlvZ7plJvlsb3lnrHplqvnirrlpq3mv4Llv5TlioUNCiogKirmvrbmsK3nibHpjZbmoKfntJHmvrY/KumUm+awtuS8qemNj+W2hu6GjOmSgOiXieaLsOmNmeODpeeTmemQqOWLr+WZuOa+tuW2hee0kea+tuWtmMSB5a+uPwoqICoq6ZG37oGG5Yqn5p2p54K05bi0KirplJvmsKzmuarmnZ7uhIHlp4zpjZzlsoPLiemNj+WRre6Yqea1o+i3qOaVpOmOreadv+e2i+mQqOWLru6UmemOuuODqOeYnemUm+WdlG93ZXZlciwgbW9yZW92ZXIsIHBhcnRpY3VsYXJseee7m+Wkm+e0mg0KKiAqKua1oOW6oeW9nua1vOaouuWOmyoq6ZSb5rCr5aiH6ZCi44Sl55W+55KH7oWd57Kg6Y2Z44Oj4oKs5L265ae455KH7oWd57Kg6Y2Z44On55OR6Y+H5aS45ZSs6ZCu5a2Y5aeM6Y2Z5bOw552N5a+u4oKs6ZSb5bG857ma6Y645L2556Wm6ZCj5ZGt5a6zDQoqICoq6Zas5Z6u5Y6k55KH5Yur5Z6O6Y6244Ol5oah6ZG1PyrplJvmsLHmlaTpiKXmu4bunYfngLXnhrLigqzmlr/ltYPnkp7imYDigqzmlr/lnr3pj4LuhZvigqzmv4jmrpHpjZnvvYXmg6LplJvlsorigqzlsoTmvarpiKXmu4TloqbpjZLll4/igqzml4Dmva/pkKnuhrnigqzml4fnmI7nkofuhZvigqzmv4jmrpHpjZnvvYXmg6INCg0KIyMjIDMuIOeSh+6Foeean+mOtuWpg+W4tg0KDQoqICoq5aed772F57Sh5raT7oWe55Sr5rWc5o+S5ouwKirplJvmsK3mmqPmtaPmkrLnuZrpjrjkvbjuhJ/pj4juiJvluLnpkb3mhKrkv4rpkKjli6rlvJfpkbLlhqnigqzRjee0nemNi+i3uueatemNlOeKsuWPhuWok+KVgeaLsOmQqOWLrOWKhemNmeinhOWeqOWvrum4v+eanw0KKiAqKumWrOWeruWOpOmWsuW2he6Ysua/gualhOefvioq6ZSb5rCt55ih5aiI55S15q6R57yB5pK054Cv6Y2c5bKD44CD5p2I54Ks5p+f5a+u5b+T57Cy6Y+I5aSL5aKN5raT5baF5oKTDQoqICoq6ZCq54a355aE6Y6w54a37paD5a+uPyrplJvmsKvntovpkJzniYjluLnpkb3mhKrmsYnpkKjli6rph5zmtZzpuL/unYfngLXnhrfmi7DpkKrnhrfnloTpjrDnhrflvYjplJvmtpjnuYDnkZXkvbnmpILpkKLjhKLigqzmu4TlnpznkZnlgprnmYLpjZI/6Y605oij7oaH5a+wP+mNpuOEpuWenOmQqOWLru6Hs+mNq+WCmeesgumIpea/iOeTkemRt+6BhuWKp+a2k+aYj+6HoumOu+aEruOBmg0KDQojIyMgNC4g5raT44Om54m457uC5L257oSb5rWc5ayu44CNDQoNCiog6YmCP+mNpuOEqeaasemNmeODpOiFkea1o+i3qOaVpOmQruWtmOWnjOmNmeeWr+e5mOeQm+WxveedjeWvruKCrA0KKiDpiYI/6ZCp5a2Y5bi05a+u5pug5pWk54Cb77i+5pWT6ZCo5Yur5bir55KH5r+H5Z6o54C156GF55i9DQoqIOmJgj/pjrvlv5rloKrpjrrjhKjltJjmtZzng5jmo6TlqInmm6HunYfngLXnhrfln4zpkKjli6zlpqfpj4juiJznso/pkbrlgpjigqzkvbjllLTplq7jhKjuhb/nkoHng5jlnqjouYflhqrmgorlqLLor7Llp6kNCiog6YmCP+e8guagreKCrOeKseaNoua1o+abn+aan+mOue6GuuKCrOS9ueWemue8geKUv+KCrOS9ueW4k+mNmuW2huWeqOmPiO6BheW9gemNmeWphOaukemOtOaEreeBiQ0KKiDpiYI/Kirpj4juiJ3uh6Lpjavll5nniKkqKumUm+awtuS8qemNj+W2heWEmua1o+a7gOesn+mOrOiNpOeyqOmWre+9hueJsee8g+algOWeque8geWXme6Vs+mOtuKCrOmPiO6ImuaCleeSh+W2j+e0mea/oeWCl+KCrOa7g+Wakea1o+abnuW9iemOue6drOKCrOS9vdCV6Y2Z5oid5quS6YqG5L247pi/55GZ5Zea7p2X57uv6I2k57K66Yil5r+I55OR6ZSb5aSO4oKs5bG856yJ6Y2L5rCz5YWY6Y2U5raY55yw6ZeI44ii5q6R5p2e7oSD55inDQoNCiMjIOWuuOODpOe2lOWotOS9uuKWvA0KDQojIyMg57uX7oO/56u05aed44Ov57Sw57uu5oOn5Zmv57ux54qz5r2X6Y675oSu5YGnDQoNCioq6ZCp7oa954ijKirplJvmsLHnk6vplqs/LTPmtpPugYbug4HpjZrloJ/luLnpkb3mhKrmsYnnkZnlgprnmYLnkZnll5runZfpkKjli6znibPouYflhqnmmaDmtZw/Cg0KKirnu5vmtqLigqzlpIvniKPpjZE/KumUmz8KDQoqIOmJgT8qKumQqeWtmOW4tOeRmeWCmueZgumNpueDmOarmSoq6ZSb5aCd57mA5qSk6I2k7oOB6Y2a5aCc5LqS5raT5ayt5Zqm54GP5oic56u057uJ5baP57Sa6ZSbPwoNCiAgKiDnkofmg6fniJ7mtZzmjpHlp6nplJvmsK3lvYHpl4Luhrrigqzkvb3uhb/nkoHmgZLigqzkvbnntKjnu4DmgZLigqzkvbjnmqznvIHli6vmgo7mtaPmu4bjgIPpkJw/
-"""
+def _read_rec_create_prompt() -> dict[str, str]:
+    """Return the Prompt resource reference used for recommendation creation."""
+
+    prompt_id = os.getenv(
+        "REC_PROMPT_ID",
+        "pmpt_68c1963af49081948e0b1a7d51152a530b1e5a4c68ba8796",
     ).strip()
-    try:
-        return base64.b64decode(REC_PROMPT_B64).decode("utf-8", errors="ignore")
-    except Exception:
-        return ""
+    prompt_version = os.getenv("REC_PROMPT_VERSION", "4").strip()
+    ref: dict[str, str] = {}
+    if prompt_id:
+        ref["prompt_id"] = prompt_id
+    if prompt_version:
+        ref["version"] = prompt_version
+    return ref
 
 
-def _build_responses_input(system_text: str, user_text: str, file_ids: list[str] | None) -> list[dict]:
-    parts = [
-        {"role": "system", "content": [{"type": "input_text", "text": system_text or ""}]},
-        {"role": "user", "content": [{"type": "input_text", "text": user_text or ""}]},
-    ]
+def _build_responses_input(system_text: str | None, user_text: str, file_ids: list[str] | None) -> list[dict]:
+    parts: list[dict] = []
+    if isinstance(system_text, str) and system_text.strip():
+        parts.append(
+            {
+                "role": "system",
+                "content": [{"type": "input_text", "text": system_text}],
+            }
+        )
+    user_entry = {"role": "user", "content": []}
+    user_entry["content"].append({"type": "input_text", "text": user_text or ""})
     if file_ids:
         for fid in file_ids:
-            parts[1]["content"].append({"type": "input_file", "file_id": fid})
+            user_entry["content"].append({"type": "input_file", "file_id": fid})
+    parts.append(user_entry)
     return parts
 
 
@@ -225,15 +319,28 @@ def _read_ps_create_prompt() -> str:
     return ""
 
 
-def _read_cv_create_prompt() -> str:
-    """Best-effort CV creation prompt.
+def _read_cv_create_prompt() -> Any:
+    """Resolve the prompt configuration for CV creation.
 
     Priority:
-    1) DB key agent_act_system_prompt:cv
-    2) Repo root cv_sys.md if present
-    3) Fallback empty string
+    1) Environment variables CV_PROMPT_ID / CV_PROMPT_VERSION (defaults to
+       pmpt_68d9f3fe3eb48197abd642d6984d6d3e01709ceef551872c)
+    2) DB key agent_act_system_prompt:cv
+    3) Repo root cv_sys.md if present
+    4) Empty string fallback
     """
-    # Try DB key used for agent act
+
+    default_prompt_id = "pmpt_68d9f3fe3eb48197abd642d6984d6d3e01709ceef551872c"
+    env_val = os.getenv("CV_PROMPT_ID")
+    prompt_id = env_val.strip() if isinstance(env_val, str) else default_prompt_id
+    if prompt_id:
+        ref: dict[str, str] = {"prompt_id": prompt_id}
+        prompt_version = os.getenv("CV_PROMPT_VERSION", "").strip()
+        if prompt_version:
+            ref["version"] = prompt_version
+        return ref
+
+    # Try DB key used for agent act (when env blank)
     try:
         val = get_prompt("agent_act_system_prompt:cv")
         if isinstance(val, str) and val.strip():
@@ -253,7 +360,7 @@ def _read_cv_create_prompt() -> str:
     return ""
 
 
-def _get_create_prompt(doc_type: str) -> str:
+def _get_create_prompt(doc_type: str) -> Any:
     dt = (doc_type or "").lower().strip()
     if dt == "ps":
         return _read_ps_create_prompt()
@@ -270,6 +377,17 @@ def _get_create_model(doc_type: str) -> str:
     if dt == "ps":
         return os.getenv("PS_CREATE_MODEL", os.getenv("DEFAULT_FASTAPI_MODEL", "gpt-5")).strip() or "gpt-5"
     return os.getenv("REC_CREATE_MODEL", os.getenv("DEFAULT_FASTAPI_MODEL", "gpt-5")).strip() or "gpt-5"
+
+
+def _get_create_agent_id(doc_type: str) -> str | None:
+    dt = (doc_type or "").lower().strip()
+    env_key = {
+        "cv": "CV_AGENT_ID",
+        "ps": "PS_AGENT_ID",
+        "rec": "REC_AGENT_ID",
+    }.get(dt, "")
+    value = os.getenv(env_key or "", "").strip() if env_key else ""
+    return value or None
 
 
 def _get_schema_name(doc_type: str) -> str:
@@ -319,6 +437,85 @@ def _build_schema() -> dict:
         },
     }
 
+
+def _extract_resume_markdown(data: Any) -> str:
+    """Walk structured outputs to find the primary resume Markdown."""
+
+    def pick(text: Any) -> str:
+        if not isinstance(text, str):
+            return ""
+        candidate = text.strip()
+        if not candidate:
+            return ""
+        if "\n" in candidate or candidate.startswith("#"):
+            return candidate
+        return ""
+
+    def walk(node: Any, depth: int = 0) -> str:
+        if depth > 8:
+            return ""
+        direct = pick(node)
+        if direct:
+            return direct
+        if isinstance(node, dict):
+            preferred_keys = [
+                "english_letter",
+                "letter_en",
+                "english_text",
+                "resume_markdown",
+                "cv_markdown",
+                "markdown",
+                "resume",
+                "cv",
+                "content",
+                "text",
+                "body",
+                "result",
+            ]
+            for key in preferred_keys:
+                if key in node:
+                    found = walk(node[key], depth + 1)
+                    if found:
+                        return found
+            for value in node.values():
+                found = walk(value, depth + 1)
+                if found:
+                    return found
+        if isinstance(node, list):
+            for item in node:
+                found = walk(item, depth + 1)
+                if found:
+                    return found
+        return ""
+
+    return walk(data)
+
+
+def _ensure_cv_heading(markdown: str) -> str:
+    """Ensure the resume starts with a level-2 heading for the candidate name."""
+
+    if not markdown:
+        return ""
+    lines = markdown.splitlines()
+    first_idx = None
+    for idx, line in enumerate(lines):
+        if line.strip():
+            first_idx = idx
+            break
+    if first_idx is None:
+        return markdown.strip()
+    first_line = lines[first_idx]
+    if first_line.lstrip().startswith("##"):
+        return markdown.strip()
+    match = re.match(r"^#+\s*(.*)$", first_line.strip())
+    if match:
+        name_part = match.group(1).strip()
+        lines[first_idx] = f"## {name_part}" if name_part else "##"
+    else:
+        lines[first_idx] = f"## {first_line.strip()}" if first_line.strip() else "##"
+    return "\n".join(lines).strip()
+
+
 async def _post_responses(api_key: str, payload: dict, timeout: float = 180.0):
     base_url = os.getenv("OPENAI_RESPONSES_URL", "https://api.openai.com/v1/responses").strip() or "https://api.openai.com/v1/responses"
     # Allow env override for read timeout (prefer CREATE_TIMEOUT, fallback REC_CREATE_TIMEOUT)
@@ -337,6 +534,56 @@ async def _post_responses(api_key: str, payload: dict, timeout: float = 180.0):
         )
 
 
+def _summarize_openai_payload(doc_type: str, payload: dict) -> dict:
+    summary = {
+        "doc_type": doc_type,
+        "model": payload.get("model"),
+        "max_output_tokens": payload.get("max_output_tokens"),
+        "reasoning_effort": (payload.get("reasoning") or {}).get("effort"),
+        "has_response_format": "response_format" in payload,
+        "input_count": len(payload.get("input") or []),
+        "input_preview": [],
+    }
+    if payload.get("agent_id"):
+        summary["agent_id"] = payload.get("agent_id")
+    prompt_meta = payload.get("prompt")
+    if isinstance(prompt_meta, dict):
+        summary["prompt_id"] = prompt_meta.get("id")
+        if prompt_meta.get("version"):
+            summary["prompt_version"] = prompt_meta.get("version")
+    try:
+        for item in (payload.get("input") or [])[:5]:
+            if not isinstance(item, dict):
+                continue
+            entry: dict[str, Any] = {}
+            role = item.get("role")
+            if isinstance(role, str):
+                entry["role"] = role
+            content_types: list[str] = []
+            for content in item.get("content") or []:
+                if not isinstance(content, dict):
+                    continue
+                ctype = content.get("type")
+                if isinstance(ctype, str):
+                    content_types.append(ctype)
+                    if ctype in {"input_text", "text"} and "text_preview" not in entry:
+                        text = content.get("text")
+                        if isinstance(text, str) and text:
+                            preview = text[:120]
+                            if len(text) > 120:
+                                preview += "..."
+                            entry["text_preview"] = preview
+            if content_types:
+                entry["content_types"] = content_types
+            summary["input_preview"].append(entry)
+    except Exception:
+        summary = {
+            "doc_type": doc_type,
+            "payload_keys": sorted(payload.keys()) if isinstance(payload, dict) else None,
+        }
+    return summary
+
+
 async def _create_inner(body: dict, doc_type: str) -> JSONResponse:
     api_key = get_openai_key()
 
@@ -353,8 +600,24 @@ async def _create_inner(body: dict, doc_type: str) -> JSONResponse:
     if not (user_prompt.strip() or file_ids):
         raise HTTPException(status_code=400, detail="prompt or file_ids is required")
 
-    system_text = _get_create_prompt(doc_type)
+    prompt_ref: dict[str, str] | None = None
+    system_prompt = _get_create_prompt(doc_type)
+    system_text: str | None = ""
+    if isinstance(system_prompt, dict):
+        prompt_id = system_prompt.get("prompt_id") or system_prompt.get("id")
+        if prompt_id:
+            prompt_ref = {"id": prompt_id}
+            version = system_prompt.get("version")
+            if isinstance(version, str) and version.strip():
+                prompt_ref["version"] = version.strip()
+            system_text = None
+        else:
+            system_text = ""
+    else:
+        system_text = str(system_prompt or "")
     model = _get_create_model(doc_type)
+    agent_id = _get_create_agent_id(doc_type)
+    use_agent = bool(agent_id)
 
     # Bound max tokens
     try:
@@ -366,29 +629,105 @@ async def _create_inner(body: dict, doc_type: str) -> JSONResponse:
     if effort not in {"low", "medium", "high"}:
         effort = "medium"
 
+    prompt_preview = user_prompt[:200]
+    if len(user_prompt) > 200:
+        prompt_preview += "..."
+    request_log = {
+        "doc_type": doc_type,
+        "language": language,
+        "file_ids": file_ids,
+        "prompt_length": len(user_prompt),
+        "prompt_preview": prompt_preview,
+        "max_tokens": max_tokens,
+        "effort": effort,
+    }
+    try:
+        _rec_logger.info("request %s", json.dumps(request_log, ensure_ascii=False))
+    except Exception:
+        _rec_logger.info(
+            "request doc_type=%s prompt_len=%d files=%s",
+            doc_type,
+            len(user_prompt),
+            file_ids,
+        )
+
     input_parts = _build_responses_input(system_text, user_prompt, file_ids or None)
 
     schema = _build_schema()
     schema_name = _get_schema_name(doc_type)
-
-    payload = {
-        "model": model,
-        "input": input_parts,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": schema_name,
-                "strict": True,
-                "schema": schema,
-            },
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": schema_name,
+            "strict": True,
+            "schema": schema,
         },
-        "max_output_tokens": max_tokens,
-        "reasoning": {"effort": effort},
-        "metadata": {"purpose": f"{doc_type or 'rec'}_create"},
     }
 
+    if use_agent:
+        payload = {
+            "agent_id": agent_id,
+            "input": input_parts,
+            "response_format": response_format,
+            "max_output_tokens": max_tokens,
+            "reasoning": {"effort": effort},
+            "metadata": {"purpose": f"{doc_type or 'rec'}_create"},
+        }
+    else:
+        payload = {
+            "model": model,
+            "input": input_parts,
+            "response_format": response_format,
+            "max_output_tokens": max_tokens,
+            "reasoning": {"effort": effort},
+            "metadata": {"purpose": f"{doc_type or 'rec'}_create"},
+        }
+        if prompt_ref:
+            payload["prompt"] = prompt_ref
+    if use_agent and prompt_ref:
+        payload["prompt"] = prompt_ref
+
+    try:
+        _rec_logger.info(
+            "openai_payload %s",
+            json.dumps(payload, ensure_ascii=False),
+        )
+    except Exception:
+        _rec_logger.info("openai_payload %s", str(payload))
+
+    try:
+        _rec_logger.info(
+            "openai_request %s",
+            json.dumps(_summarize_openai_payload(doc_type, payload), ensure_ascii=False),
+        )
+    except Exception:
+        _rec_logger.info(
+            "openai_request doc_type=%s model=%s input_count=%d",
+            doc_type,
+            model,
+            len(payload.get("input") or []),
+        )
+
     # Call Responses API with fallback when response_format unsupported
-    r = await _post_responses(api_key, payload)
+    try:
+        r = await _post_responses(api_key, payload)
+    except httpx.HTTPError as exc:
+        try:
+            _rec_logger.error(
+                "response_http_error %s",
+                json.dumps(
+                    {
+                        "doc_type": doc_type,
+                        "payload_keys": list(payload.keys()),
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        except Exception:
+            _rec_logger.error("response_http_error doc_type=%s %s", doc_type, exc)
+        raise HTTPException(status_code=502, detail={"message": "Upstream request failed", "error": str(exc)}) from exc
     content_type = r.headers.get("content-type", "application/json")
     if r.status_code >= 400:
         # If unsupported response_format, fall back to text JSON
@@ -416,13 +755,91 @@ async def _create_inner(body: dict, doc_type: str) -> JSONResponse:
             }
             fallback["input"] = input_parts + [extra_instruction]
             fallback["text"] = {"format": {"type": "json_object"}}
-            r = await _post_responses(api_key, fallback)
+            try:
+                _rec_logger.info(
+                    "openai_payload_fallback %s",
+                    json.dumps(fallback, ensure_ascii=False),
+                )
+            except Exception:
+                _rec_logger.info("openai_payload_fallback %s", str(fallback))
+            try:
+                _rec_logger.info(
+                    "openai_request_fallback %s",
+                    json.dumps(_summarize_openai_payload(doc_type, fallback), ensure_ascii=False),
+                )
+            except Exception:
+                _rec_logger.info(
+                    "openai_request_fallback doc_type=%s input_count=%d",
+                    doc_type,
+                    len(fallback.get("input") or []),
+                )
+            try:
+                r = await _post_responses(api_key, fallback)
+            except httpx.HTTPError as exc:
+                try:
+                    _rec_logger.error(
+                        "response_http_error %s",
+                        json.dumps(
+                            {
+                                "doc_type": doc_type,
+                                "payload_keys": list(fallback.keys()),
+                                "error": str(exc),
+                                "error_type": type(exc).__name__,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
+                except Exception:
+                    _rec_logger.error("response_http_error doc_type=%s %s", doc_type, exc)
+                raise HTTPException(status_code=502, detail={"message": "Upstream request failed", "error": str(exc)}) from exc
             content_type = r.headers.get("content-type", "application/json")
 
+    try:
+        response_text = r.text
+    except Exception:
+        response_text = ""
+
     if "application/json" not in content_type:
+        try:
+            _rec_logger.error(
+                "response_error %s",
+                json.dumps(
+                    {
+                        "doc_type": doc_type,
+                        "status_code": r.status_code,
+                        "content_type": content_type,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        except Exception:
+            _rec_logger.error(
+                "response_error doc_type=%s status=%s content_type=%s",
+                doc_type,
+                r.status_code,
+                content_type,
+            )
+        try:
+            _rec_logger.info(
+                "openai_response_raw %s",
+                response_text or "",
+            )
+        except Exception:
+            _rec_logger.info("openai_response_raw <unavailable>")
         return JSONResponse(status_code=200, content={"status": "error", "error": {"message": r.text}})
 
     data = r.json()
+
+    try:
+        _rec_logger.info(
+            "openai_response_raw %s",
+            json.dumps(data, ensure_ascii=False),
+        )
+    except Exception:
+        try:
+            _rec_logger.info("openai_response_raw %s", r.text)
+        except Exception:
+            _rec_logger.info("openai_response_raw <unavailable>")
 
     # Extract output_text for convenience
     output_text = data.get("output_text") or ""
@@ -490,17 +907,241 @@ async def _create_inner(body: dict, doc_type: str) -> JSONResponse:
         except Exception:
             others = {}
 
+    response_log = {
+        "doc_type": doc_type,
+        "status_code": r.status_code,
+        "response_id": data.get("id"),
+        "output_text_length": len(output_text or ""),
+        "structured_keys": sorted(list(others.keys())) if isinstance(others, dict) else None,
+    }
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if isinstance(usage, dict):
+        response_log["usage"] = {k: usage.get(k) for k in ("input_tokens", "output_tokens", "total_tokens") if k in usage}
+    try:
+        _rec_logger.info(
+            "openai_response %s",
+            json.dumps(response_log, ensure_ascii=False),
+        )
+    except Exception:
+        _rec_logger.info(
+            "openai_response doc_type=%s status=%s output_len=%d",
+            doc_type,
+            r.status_code,
+            len(output_text or ""),
+        )
+
     return JSONResponse(status_code=200, content={
         "status": "ok",
         "raw": data,
         "output_text": output_text or "",
         "others": others,
     })
+
+
+async def _create_cv(body: dict) -> JSONResponse:
+    api_key = get_openai_key()
+
+    user_prompt = str(body.get("prompt") or "")
+    language = str(body.get("language") or "").strip()
+    if language:
+        if user_prompt:
+            user_prompt = f"{user_prompt}\n\nLanguage: {language}"
+        else:
+            user_prompt = f"Language: {language}"
+
+    file_ids = [str(x) for x in (body.get("file_ids") or []) if isinstance(x, (str, bytes))]
+    if not (user_prompt.strip() or file_ids):
+        raise HTTPException(status_code=400, detail="prompt or file_ids is required")
+
+    prompt_ref: dict[str, str] | None = None
+    system_prompt = _get_create_prompt("cv")
+    system_text: str | None = ""
+    if isinstance(system_prompt, dict):
+        prompt_id = system_prompt.get("prompt_id") or system_prompt.get("id")
+        if prompt_id:
+            prompt_ref = {"id": prompt_id}
+            version = system_prompt.get("version")
+            if isinstance(version, str) and version.strip():
+                prompt_ref["version"] = version.strip()
+            system_text = None
+        else:
+            system_text = ""
+    else:
+        system_text = str(system_prompt or "")
+
+    model = _get_create_model("cv")
+    agent_id = _get_create_agent_id("cv")
+    use_agent = bool(agent_id)
+
+    try:
+        max_tokens = int(body.get("max_output_tokens") or 8192)
+        max_tokens = max(512, min(max_tokens, 16384))
+    except Exception:
+        max_tokens = 8192
+    effort = str(body.get("reasoning_effort") or "medium").lower()
+    if effort not in {"low", "medium", "high"}:
+        effort = "medium"
+
+    prompt_preview = user_prompt[:200]
+    if len(user_prompt) > 200:
+        prompt_preview += "..."
+    request_log = {
+        "doc_type": "cv",
+        "language": language,
+        "file_ids": file_ids,
+        "prompt_length": len(user_prompt),
+        "prompt_preview": prompt_preview,
+        "max_tokens": max_tokens,
+        "effort": effort,
+    }
+    try:
+        _rec_logger.info("request %s", json.dumps(request_log, ensure_ascii=False))
+    except Exception:
+        _rec_logger.info(
+            "request doc_type=cv prompt_len=%d files=%s",
+            len(user_prompt),
+            file_ids,
+        )
+
+    input_parts = _build_responses_input(system_text, user_prompt, file_ids or None)
+
+    if use_agent:
+        payload = {
+            "agent_id": agent_id,
+            "input": input_parts,
+            "max_output_tokens": max_tokens,
+            "reasoning": {"effort": effort},
+            "metadata": {"purpose": "cv_create"},
+        }
+    else:
+        payload = {
+            "model": model,
+            "input": input_parts,
+            "max_output_tokens": max_tokens,
+            "reasoning": {"effort": effort},
+            "metadata": {"purpose": "cv_create"},
+        }
+        if prompt_ref:
+            payload["prompt"] = prompt_ref
+    if use_agent and prompt_ref:
+        payload["prompt"] = prompt_ref
+
+    try:
+        _rec_logger.info(
+            "openai_payload %s",
+            json.dumps(payload, ensure_ascii=False),
+        )
+    except Exception:
+        _rec_logger.info("openai_payload %s", str(payload))
+
+    try:
+        _rec_logger.info(
+            "openai_request %s",
+            json.dumps(_summarize_openai_payload("cv", payload), ensure_ascii=False),
+        )
+    except Exception:
+        _rec_logger.info(
+            "openai_request doc_type=cv model=%s input_count=%d",
+            model,
+            len(payload.get("input") or []),
+        )
+
+    try:
+        r = await _post_responses(api_key, payload)
+    except httpx.HTTPError as exc:
+        try:
+            _rec_logger.error(
+                "response_http_error %s",
+                json.dumps(
+                    {
+                        "doc_type": "cv",
+                        "payload_keys": list(payload.keys()),
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        except Exception:
+            _rec_logger.error("response_http_error doc_type=cv %s", exc)
+        raise HTTPException(status_code=502, detail={"message": "Upstream request failed", "error": str(exc)}) from exc
+
+    content_type = r.headers.get("content-type", "application/json")
+    if r.status_code >= 400:
+        try:
+            err = r.json()
+        except Exception:
+            err = {"error": r.text or ""}
+        raise HTTPException(status_code=r.status_code, detail=err)
+
+    try:
+        response_text = r.text
+    except Exception:
+        response_text = ""
+
+    data = r.json()
+
+    try:
+        _rec_logger.info(
+            "openai_response_raw %s",
+            json.dumps(data, ensure_ascii=False),
+        )
+    except Exception:
+        try:
+            _rec_logger.info("openai_response_raw %s", response_text)
+        except Exception:
+            _rec_logger.info("openai_response_raw <unavailable>")
+
+    output_text = data.get("output_text") or ""
+    if not output_text:
+        try:
+            output = data.get("output") or []
+            for item in output:
+                if item.get("type") == "message":
+                    for chunk in item.get("content", []) or []:
+                        if isinstance(chunk, dict) and chunk.get("type") in ("output_text", "text"):
+                            output_text = chunk.get("text") or ""
+                            break
+                    if output_text:
+                        break
+        except Exception:
+            output_text = ""
+    if not output_text and isinstance(data.get("reply"), str):
+        output_text = data.get("reply")
+
+    resume_markdown = (output_text or "").replace("\r\n", "\n").strip()
+    if not resume_markdown:
+        try:
+            resume_markdown = _extract_resume_markdown(data)
+        except Exception:
+            resume_markdown = ""
+    if not resume_markdown:
+        raise HTTPException(status_code=502, detail={"message": "No resume content returned"})
+
+    resume_markdown = _ensure_cv_heading(resume_markdown)
+
+    try:
+        _rec_logger.info(
+            "cv_result_summary %s",
+            json.dumps({"length": len(resume_markdown)}, ensure_ascii=False),
+        )
+    except Exception:
+        pass
+
+    return JSONResponse(status_code=200, content={"result": resume_markdown})
+
+
 @app.post("/api/rec/create")
 async def rec_create(req: Request):
     body = await req.json()
     # Back-compat: keep this path but delegate to new generic handler
     return await _create_inner(body, "rec")
+
+
+@app.post("/api/cv/create")
+async def cv_create(req: Request):
+    body = await req.json()
+    return await _create_cv(body)
 
 
 @app.post("/api/create")
@@ -510,6 +1151,8 @@ async def create(req: Request):
     doc_type = (body.get("doc_type") or body.get("docType") or body.get("type") or "rec").strip().lower()
     if doc_type not in {"cv", "ps", "rec"}:
         doc_type = "rec"
+    if doc_type == "cv":
+        return await _create_cv(body)
     return await _create_inner(body, doc_type)
 
 

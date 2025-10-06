@@ -172,6 +172,7 @@ import { useDataStore } from '~/composables/stores/data'
 import { useRoute } from '#imports'
 import Dialog from '~/components/shared/base/Dialog.vue'
 import PromptSettings from '~/components/shared/PromptSettings.vue'
+import { resolveBackendBase } from '~/utils/backendBase'
 
 type Role = 'user' | 'assistant'
 interface CursorPreview { result?: string; targets?: any[] }
@@ -194,10 +195,11 @@ const lastSelection = ref<WorkspaceSelection | null>(null)
 
 const cfg = useRuntimeConfig()
 const route = useRoute()
-const backendBase: string = (cfg.public as any)?.backendBase || ''
+const backendBase = resolveBackendBase((cfg.public as any)?.backendBase)
 const chatbotCfg: any = (cfg.public as any)?.chatbot || {}
-const agentUrl: string = backendBase ? `${backendBase.replace(/\/$/, '')}/api/agent/act` : '/api/agent/act'
-const filesBase: string = backendBase ? backendBase.replace(/\/$/, '') : ''
+const agentBase = backendBase ? backendBase.replace(/\/$/, '') : ''
+const agentUrl: string = agentBase ? `${agentBase}/api/agent/act` : '/api/agent/act'
+const filesBase: string = agentBase
 const model = String(chatbotCfg.model || 'gpt-5')
 const modelLabel = computed(() => `agent · model: ${model}`)
 

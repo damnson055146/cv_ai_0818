@@ -5,6 +5,7 @@ import { VersionManager } from './versionManager'
 import { KeywordAnalyzer, searchParagraphsWithContext } from './keywordAnalyzer'
 import { CVSectionLocator, type LocatorInput } from './cvSectionLocator'
 import { OperationApplier, type ApplyOperationsInput } from './operationApplier'
+import { resolveBackendBase } from '~/utils/backendBase'
 import type { 
   ParagraphKeywordRecord,
   IntentParseRequest,
@@ -372,8 +373,8 @@ export class UpdateManager {
     }
 
     const runtime: any = (globalThis as any).__NUXT__?.config || { public: {} }
-    const backendBase = (runtime.public as any)?.backendBase || ''
-    const ipUrl = backendBase ? backendBase.replace(/\/$/, '') + '/api/intent-parse' : '/api/intent-parse'
+    const backendBase = resolveBackendBase((runtime.public as any)?.backendBase)
+    const ipUrl = backendBase ? `${backendBase.replace(/\/$/, '')}/api/intent-parse` : '/api/intent-parse'
     const response = await fetch(ipUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -393,8 +394,8 @@ export class UpdateManager {
     }
 
     const runtime: any = (globalThis as any).__NUXT__?.config || { public: {} }
-    const backendBase = (runtime.public as any)?.backendBase || ''
-    const cgUrl = backendBase ? backendBase.replace(/\/$/, '') + '/api/content-generate' : '/api/content-generate'
+    const backendBase = resolveBackendBase((runtime.public as any)?.backendBase)
+    const cgUrl = backendBase ? `${backendBase.replace(/\/$/, '')}/api/content-generate` : '/api/content-generate'
     const response = await fetch(cgUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -475,5 +476,4 @@ export class UpdateManager {
 
   // ====== 撤销/重做功能已删除 ======
 }
-
 

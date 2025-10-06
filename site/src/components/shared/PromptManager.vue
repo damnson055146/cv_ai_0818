@@ -40,13 +40,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRuntimeConfig } from '#imports'
+import { resolveBackendBase } from '~/utils/backendBase'
 
 const props = defineProps<{ scope?: 'general' | 'chatbot' }>()
 const scope = props.scope || 'general'
 
 const cfg = useRuntimeConfig()
-const backendBase: string = (cfg.public as any)?.backendBase || ''
-const apiBase = backendBase ? backendBase.replace(/\/$/, '') : ''
+const apiBase = resolveBackendBase((cfg.public as any)?.backendBase)
 
 const keys = ref<string[]>([])
 const query = ref('')
@@ -134,4 +134,3 @@ onMounted(() => { loadKeys() })
 .rect-btn { border-radius: 8px; }
 .input { min-width: 120px; }
 </style>
-

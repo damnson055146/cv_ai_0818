@@ -7,6 +7,29 @@ dotenv.config();
 // Also try site/configs/.env during dev/start
 dotenv.config({ path: "./configs/.env" });
 const SITE_URL = process.env.NUXT_PUBLIC_SITE_URL || process.env.SITE_URL || "http://localhost:3000";
+const DEV_HMR_HOST =
+  process.env.NUXT_VITE_HMR_HOST ||
+  process.env.NUXT_PUBLIC_HMR_HOST ||
+  process.env.NUXT_DEV_HMR_HOST ||
+  process.env.HMR_HOST ||
+  "";
+const DEV_HMR_PORT = process.env.NUXT_VITE_HMR_PORT || process.env.NUXT_PUBLIC_HMR_PORT || process.env.HMR_PORT;
+const DEV_HMR_PROTOCOL =
+  process.env.NUXT_VITE_HMR_PROTOCOL ||
+  process.env.NUXT_PUBLIC_HMR_PROTOCOL ||
+  process.env.HMR_PROTOCOL ||
+  "ws";
+const DEV_HMR_PATH = process.env.NUXT_VITE_HMR_PATH || process.env.NUXT_PUBLIC_HMR_PATH || "";
+const resolvedHmrConfig = DEV_HMR_HOST
+  ? {
+      protocol: DEV_HMR_PROTOCOL,
+      host: DEV_HMR_HOST,
+      port: DEV_HMR_PORT ? Number(DEV_HMR_PORT) : undefined,
+      path: DEV_HMR_PATH || undefined
+    }
+  : undefined;
+
+const shouldForceDynamicHmr = process.env.NUXT_VITE_HMR_DYNAMIC === 'true';
 
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
@@ -126,8 +149,22 @@ export default defineNuxtConfig({
           ".docx"
         ]
       },
+      cv: {
+        requireUpload: false,
+        allowedUploadTypes: [
+          "application/pdf",
+          "text/plain",
+          "text/markdown",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          ".md",
+          ".txt",
+          ".doc",
+          ".docx"
+        ]
+      },
       rec: {
-        requireUpload: true,
+        requireUpload: false,
         allowedUploadTypes: [
           "application/pdf",
           "text/plain",
@@ -184,7 +221,43 @@ export default defineNuxtConfig({
       alias: {
         "/css": fileURLToPath(new URL("./src/assets/css", import.meta.url))
       }
-    }
+    },
+    server: {
+      hmr: resolvedHmrConfig
+    },
+    plugins: [
+      ...(shouldForceDynamicHmr || !resolvedHmrConfig
+        ? [
+            {
+              name: "nuxt-hmr-dynamic-host",
+              apply: "serve",
+              enforce: "post",
+              transform(code: string, id: string) {
+                if (!id.includes("/vite/dist/client/client.mjs")) {
+                  return null;
+                }
+                if (!code.includes("const socketHost = `${__HMR_HOSTNAME__ || importMetaUrl.hostname}:${hmrPort || importMetaUrl.port}${__HMR_BASE__}`;")) {
+                  return null;
+                }
+                return code.replace(
+                  "const socketHost = `${__HMR_HOSTNAME__ || importMetaUrl.hostname}:${hmrPort || importMetaUrl.port}${__HMR_BASE__}`;",
+                  [
+                    "const __hmrRawHostname = __HMR_HOSTNAME__ || importMetaUrl.hostname;",
+                    "const __hmrRawPort = hmrPort || importMetaUrl.port;",
+                    "const __hmrResolvedHostname = typeof window !== \"undefined\" && window.location?.hostname",
+                    "  ? window.location.hostname",
+                    "  : __hmrRawHostname;",
+                    "const __hmrResolvedPort = typeof window !== \"undefined\" && window.location?.port",
+                    "  ? window.location.port",
+                    "  : __hmrRawPort;",
+                    "const socketHost = `${__hmrResolvedHostname}${__hmrResolvedPort ? `:${__hmrResolvedPort}` : \"\"}${__HMR_BASE__}`;"
+                  ].join("\n")
+                );
+              }
+            }
+          ]
+        : [])
+    ]
   },
 
   // Enable external access in dev when running locally or in Docker

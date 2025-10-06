@@ -117,6 +117,7 @@ import { UpdateManager } from "~/data/updateManager";
 import { VersionManager } from "~/data/versionManager";
 import { ref, onMounted, onBeforeUnmount, watch, computed, reactive } from "vue";
 import { useDataStore } from "~/composables";
+import { resolveBackendBase } from "~/utils/backendBase";
 
 const props = defineProps<{
   leftSidebarComponent?: any;
@@ -615,8 +616,10 @@ const applyEditorCommand = async (cmd: IncomingEditorCommand) => {
     const body: any = { prompt: cmd.prompt, context: { selectedText: selected } };
     try {
       const runtime: any = (window as any).__NUXT__?.config || { public: {} }
-      const backendBase = (runtime.public as any)?.backendBase || ''
-      const url = backendBase ? backendBase.replace(/\/$/, '') + '/api/content-generate' : `${((window as any).__NUXT__?.config?.app?.baseURL || '/').replace(/\/$/, '')}/api/content-generate`;
+      const backendBase = resolveBackendBase((runtime.public as any)?.backendBase)
+      const fallbackBase = ((window as any).__NUXT__?.config?.app?.baseURL || '/').replace(/\/$/, '')
+      const apiRoot = backendBase || fallbackBase
+      const url = apiRoot ? `${apiRoot}/api/content-generate` : '/api/content-generate'
       const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
       const text = String(data?.content || '');
@@ -1506,8 +1509,10 @@ const replaceSelectionText = (text: string) => {
   ]);
 };
 
-const getCurrentSelectionRect = () => {
-  if (!editor || !editorRef.value) return { x: 0, y: 0, visible: false } as { x: number; y: number; visible: boolean };
+type SelectionRect = { x: number; y: number; visible: boolean; height?: number };
+
+const getCurrentSelectionRect = (): SelectionRect => {
+  if (!editor || !editorRef.value) return { x: 0, y: 0, visible: false };
   const ed = editor.editor as any;
   const model = ed.getModel();
   if (!model) return { x: 0, y: 0, visible: false };
@@ -1517,10 +1522,25 @@ const getCurrentSelectionRect = () => {
   const vp = ed.getScrolledVisiblePosition(start);
   if (!vp) return { x: 0, y: 0, visible: false };
   const rect = (editorRef.value as HTMLElement).getBoundingClientRect();
+  const height = typeof vp.height === 'number' && vp.height > 0
+    ? vp.height
+    : (() => {
+        try {
+          if (typeof ed.getOption === 'function') {
+            const monacoNs = (window as any).monaco;
+            const lineHeightOpt = monacoNs?.editor?.EditorOption?.lineHeight;
+            if (typeof lineHeightOpt === 'number') {
+              return ed.getOption(lineHeightOpt) || 24;
+            }
+          }
+        } catch {}
+        return 24;
+      })();
   return {
     x: rect.left + window.scrollX + vp.left,
     y: rect.top + window.scrollY + vp.top,
-    visible: true
+    visible: true,
+    height
   };
 };
 
