@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .toolbar_ai import router as toolbar_router
 from .agent import router as agent_router
 from .db import ensure_prompts_table, ensure_ps_tables, get_prompt
+from .file_conversion import ensure_pdf_bytes
 
 
 # Load envs from backend_fastapi/.env if present
@@ -173,8 +174,18 @@ async def upload_base64_to_openai_file(
         except Exception as exc:
             raise HTTPException(status_code=400, detail="Invalid base64 content") from exc
 
+    normalized_name, normalized_bytes, normalized_type = ensure_pdf_bytes(
+        name,
+        content_type,
+        file_bytes,
+    )
+
     files = {
-        "file": (name, file_bytes, content_type or "application/octet-stream"),
+        "file": (
+            normalized_name,
+            normalized_bytes,
+            normalized_type or "application/octet-stream",
+        ),
         "purpose": (None, purpose or "user_data"),
     }
     async with httpx.AsyncClient(timeout=120.0) as client:

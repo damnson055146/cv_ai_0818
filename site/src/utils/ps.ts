@@ -10,6 +10,52 @@ export interface PsDocMeta {
 
 const META_PREFIX = 'ps_doc_meta_'
 const OUTLINE_STATUS_PREFIX = 'ps_outline_status_'
+const PS_PREFIXES = [META_PREFIX, OUTLINE_STATUS_PREFIX]
+
+const isQuotaError = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false
+  const name = (error as any).name
+  const code = (error as any).code
+  return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || code === 22
+}
+
+const prunePsStorage = () => {
+  try {
+    const removeKeys: string[] = []
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i)
+      if (!key) continue
+      if (PS_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+        removeKeys.push(key)
+      }
+    }
+    // Remove oldest keys first
+    for (const key of removeKeys) {
+      localStorage.removeItem(key)
+    }
+  } catch {}
+}
+
+const safeSetItem = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value)
+    return true
+  } catch (error) {
+    if (isQuotaError(error)) {
+      prunePsStorage()
+      try {
+        localStorage.setItem(key, value)
+        return true
+      } catch (err) {
+        if (!isQuotaError(err)) throw err
+        console.warn('[PS Storage] quota exceeded even after pruning', err)
+      }
+    } else {
+      throw error
+    }
+  }
+  return false
+}
 
 export function getPsMeta(id: string): PsDocMeta | null {
   try {
@@ -21,7 +67,7 @@ export function getPsMeta(id: string): PsDocMeta | null {
 }
 
 export function setPsMeta(id: string, meta: PsDocMeta): void {
-  localStorage.setItem(META_PREFIX + id, JSON.stringify(meta))
+  safeSetItem(META_PREFIX + id, JSON.stringify(meta))
 }
 
 export function setPsMetaForPair(params: { outlineId: string; bodyId: string; chatId: string; initialOutlineHash?: string }): void {
@@ -33,7 +79,7 @@ export function setPsMetaForPair(params: { outlineId: string; bodyId: string; ch
 }
 
 export function markOutlineComplete(chatId: string, complete = true): void {
-  localStorage.setItem(OUTLINE_STATUS_PREFIX + chatId, complete ? '1' : '0')
+  safeSetItem(OUTLINE_STATUS_PREFIX + chatId, complete ? '1' : '0')
 }
 
 export function isOutlineComplete(chatId: string): boolean {
@@ -56,5 +102,3 @@ export function simpleHash(text: string): string {
   }
   return String(h >>> 0)
 }
-
-

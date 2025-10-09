@@ -251,8 +251,10 @@ const acceptedRecTypes = computed(() => {
 const router = useRouter();
 const localePath = useLocalePath();
 import { useToast } from "~/composables/toast";
-import { newResume, newResumeFromImport } from "~/utils/database";
+import { deleteResume, getStorage, newResume, newResumeFromImport, saveResume } from "~/utils/database";
 import { buildTemplateKey, buildPsTemplateKey } from "~/utils";
+import { createChatId, setDocMeta } from "~/utils/docContext";
+import { uploadSupportFile } from "~/utils/fileUpload";
 const toast = useToast();
 
 type Doc = 'cv' | 'ps' | 'rec';
@@ -288,16 +290,40 @@ const recName = ref<string>("")
 const recSubmitting = ref<boolean>(false)
 const cvSubmitting = ref<boolean>(false)
 
+const guessFileMime = (filename: string): string => {
+  const lower = (filename || '').toLowerCase()
+  if (lower.endsWith('.pdf')) return 'application/pdf'
+  if (lower.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  if (lower.endsWith('.doc')) return 'application/msword'
+  if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'text/markdown'
+  if (lower.endsWith('.txt')) return 'text/plain'
+  if (lower.endsWith('.png')) return 'image/png'
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
+  if (lower.endsWith('.webp')) return 'image/webp'
+  if (lower.endsWith('.gif')) return 'image/gif'
+  return ''
+}
+
+const ensurePrimaryHeading = (markdown: string): { markdown: string; heading: string } => {
+  if (!markdown) return { markdown, heading: '' }
+  const single = markdown.match(/^#\s+(.+)$/m)
+  if (single) return { markdown, heading: single[1].trim() }
+  const double = markdown.match(/^##\s+(.+)$/m)
+  if (double) {
+    return { markdown: markdown.replace(/^##\s+(.+)$/m, '# $1'), heading: double[1].trim() }
+  }
+  return { markdown, heading: '' }
+}
+
 const setLang = (l: Lang) => { lang.value = l }
 const canConfirm = computed(() => {
   if (curDoc.value === 'ps') {
     if (!lang.value) return false
     if (uploadParsing.value) return false
-    if (psCfg.value.requireUpload) {
-      const hasFile = !!uploadFile.value
-      const hasText = Boolean(initialText.value.trim())
-      if (!hasFile && !hasText) return false
-    }
+    const hasFile = !!uploadFile.value
+    const hasText = Boolean(initialText.value.trim())
+    if (!hasFile && !hasText) return false
+    if (psCfg.value.requireUpload && !hasFile) return false
     return true
   }
   if (curDoc.value === 'rec') {
@@ -415,19 +441,21 @@ const createBy = async (docType: Doc, lang: Lang) => {
   if (docType !== 'ps') {
     const key = buildTemplateKey(docType, lang);
     const id = await newResume(key);
-    try { localStorage.setItem('doc_meta_' + id, JSON.stringify({ docType: docType === 'rec' ? 'rec' : 'cv', lang })) } catch {}
+    setDocMeta(id, { docType: docType === 'rec' ? 'rec' : 'cv', lang });
     router.push(localePath(`/edit/${id}`));
     return
   }
 
   // Create two docs: outline and body, share chatId
-  const chatId = `chat_${Date.now().toString(36)}`
+  const chatId = createChatId();
   const outlineId = await newResume(buildPsTemplateKey(lang, 'outline'))
   const bodyId = await newResume(buildPsTemplateKey(lang, 'body'))
 
   // Mark meta for PS outline/body pair
   const { setPsMetaForPair } = await import('~/utils/ps')
   setPsMetaForPair({ outlineId, bodyId, chatId })
+  setDocMeta(outlineId, { docType: 'ps', lang })
+  setDocMeta(bodyId, { docType: 'ps', lang })
 
   // Seed chatbot with initial info as system/user messages
   try {
@@ -445,34 +473,111 @@ const createBy = async (docType: Doc, lang: Lang) => {
 const confirmCreate = async () => {
   if (curDoc.value !== 'ps' || !lang.value) return
   if (psSubmitting.value) return
+
+  const manual = initialText.value.trim()
+  const hasFile = !!uploadFile.value
+  if (!hasFile && !manual) {
+    ;(toast as any).import(false)
+    return
+  }
+  if (psCfg.value.requireUpload && !hasFile) {
+    ;(toast as any).import(false)
+    return
+  }
+
   psSubmitting.value = true
   setAgentStep('准备创建文书...')
+
   let outlineId: string | null = null
+  let bodyId: string | null = null
+  let chatId: string | null = null
+
+  const decodeNewlines = (text: string) => (text || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
+  const looksLikeJson = (text: string) => {
+    const trimmed = text.trim()
+    return (trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))
+  }
+  const findStringByKeys = (value: any, keys: string[], visited = new WeakSet<object>()): string => {
+    if (!value) return ''
+    if (typeof value === 'string') return value.trim()
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = findStringByKeys(item, keys, visited)
+        if (found) return found
+      }
+      return ''
+    }
+    if (typeof value === 'object') {
+      if (visited.has(value)) return ''
+      visited.add(value)
+      for (const key of keys) {
+        const found = findStringByKeys((value as any)[key], keys, visited)
+        if (found) return found
+      }
+      for (const key of Object.keys(value as any)) {
+        if (keys.includes(key)) continue
+        const found = findStringByKeys((value as any)[key], keys, visited)
+        if (found) return found
+      }
+    }
+    return ''
+  }
 
   try {
-    const chatId = `chat_${Date.now().toString(36)}`
+    chatId = createChatId()
     outlineId = await newResume(buildPsTemplateKey(lang.value, 'outline'))
-    const bodyId = await newResume(buildPsTemplateKey(lang.value, 'body'))
+    bodyId = await newResume(buildPsTemplateKey(lang.value, 'body'))
+    if (!outlineId || !bodyId) throw new Error('ps_doc_init_failed')
 
-    const { setPsMetaForPair } = await import('~/utils/ps')
-    setPsMetaForPair({ outlineId, bodyId, chatId })
+    const psUtils = await import('~/utils/ps')
+    psUtils.setPsMetaForPair({ outlineId, bodyId, chatId })
+    setDocMeta(outlineId, { docType: 'ps', lang: lang.value })
+    setDocMeta(bodyId, { docType: 'ps', lang: lang.value })
 
-    if (fileId) try {
-      setAgentStep('准备上下文...')
+    try {
       const { convStore } = await import('~/data/contextStore')
       const prelim: string[] = []
       if (projectInfo.value) prelim.push(`Project: ${projectInfo.value}`)
       if (studentInfo.value) prelim.push(`Student: ${studentInfo.value}`)
       if (prelim.length) convStore.appendMessage(chatId, 'user', prelim.join('\n'))
-      if (initialText.value.trim()) convStore.appendMessage(chatId, 'user', initialText.value.trim())
+      if (manual) convStore.appendMessage(chatId, 'user', manual)
     } catch (err) {
-      console.warn('[PS Seed] failed to preload chat context', err)
+      console.warn('[PS Context] failed to append prelim messages', err)
     }
 
+    let fileId: string | null = null
+    let attachmentName = ''
+    let attachmentMime = ''
+    if (uploadFile.value) {
+      const info = uploadFile.value
+      attachmentName = info.name || 'attachment.bin'
+      attachmentMime = guessFileMime(attachmentName) || info.mime || ''
+      let base64Payload = info.base64 || ''
+      if (!base64Payload && info.text) {
+        base64Payload = textToBase64(info.text)
+      }
+      if (base64Payload) {
+        setAgentStep('上传附件...')
+        fileId = await uploadSupportFile({
+          backendBase: backendBase.value,
+          name: attachmentName,
+          contentBase64: base64Payload,
+          purpose: 'user_data',
+          contentType: attachmentMime || undefined
+        })
+        try {
+          const payload = { images: [], files: [{ id: fileId, name: attachmentName, mime: attachmentMime }] }
+          const marker = '[[ATTACHMENTS]]' + JSON.stringify(payload)
+          ;(window as any).__pendingChatMessages = ((window as any).__pendingChatMessages || [])
+          ;(window as any).__pendingChatMessages.unshift(marker)
+        } catch {}
+      }
+    }
+
+    setAgentStep('整理上下文...')
     let extracted = ''
     if (uploadFile.value) {
       try {
-        setAgentStep('解析上传的素材...')
         extracted = await extractTextFromFile()
       } catch (err) {
         console.error('[PS Upload] failed to extract content', err)
@@ -480,42 +585,170 @@ const confirmCreate = async () => {
       }
     }
 
-    const manual = initialText.value.trim()
-    const uploadText = [extracted, manual].filter(Boolean).join('\n\n').trim()
+    const promptSections: string[] = []
+    if (projectInfo.value) promptSections.push(`Project Information:\n${projectInfo.value}`)
+    if (studentInfo.value) promptSections.push(`Student Profile:\n${studentInfo.value}`)
+    if (manual) promptSections.push(`User Notes:\n${manual}`)
+    if (extracted) promptSections.push(`Extracted Materials:\n${extracted}`)
+    const promptText = promptSections.join('\n\n').trim()
 
-    if (uploadText) {
-      try {
-        setAgentStep('生成初始写作建议...')
-        const seed: any = await $fetch('/api/ps/seed-from-upload', {
-          method: 'POST',
-          body: {
-            chatId,
-            language: lang.value,
-            uploadText,
-            projectInfo: projectInfo.value,
-            studentInfo: studentInfo.value
-          }
-        })
-        if (seed && seed.status === 'ok') {
-          try { localStorage.setItem(`ps_seed_${chatId}`, JSON.stringify(seed.data)) } catch {}
-          try { (toast as any).import(true) } catch {}
+    if (!fileId && !promptText) throw new Error('missing_input')
+
+    const reqBody: any = {
+      doc_type: 'ps',
+      max_output_tokens: 8192,
+      reasoning_effort: 'medium'
+    }
+    if (lang.value) reqBody.language = lang.value
+    if (fileId) reqBody.file_ids = [fileId]
+    if (promptText) reqBody.prompt = promptText
+
+    setAgentStep('调用模型生成文书...')
+    const createUrl = backendBase.value ? `${backendBase.value}/api/create` : '/api/create'
+    const res: any = await $fetch(createUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: reqBody
+    })
+
+    setAgentStep('解析与整理结果...')
+
+    const others = (res?.others && typeof res.others === 'object') ? res.others : {}
+    const structuredCandidates: any[] = []
+    const outlineStrings: string[] = []
+    const bodyStrings: string[] = []
+
+    if (typeof others.outline === 'string') outlineStrings.push(others.outline)
+    if (typeof res?.result === 'string') bodyStrings.push(res.result)
+    if (typeof res?.output_text === 'string') {
+      const text = res.output_text.trim()
+      if (text) {
+        if (looksLikeJson(text)) {
+          try {
+            structuredCandidates.push(JSON.parse(text))
+          } catch {}
         } else {
-          try { (toast as any).import(false) } catch {}
+          bodyStrings.push(text)
         }
-      } catch (err) {
-        console.error('[PS Seed] request failed', err)
-        try { (toast as any).import(false) } catch {}
       }
     }
+
+    const rawOutput = res?.raw
+    if (rawOutput && Array.isArray(rawOutput.output)) {
+      for (const item of rawOutput.output) {
+        const contents = item?.content || []
+        for (const chunk of contents) {
+          if (chunk && typeof chunk.json === 'object') structuredCandidates.push(chunk.json)
+          if (typeof chunk.text === 'string') {
+            const txt = chunk.text.trim()
+            if (txt) bodyStrings.push(txt)
+          }
+        }
+      }
+    }
+
+    if (res?.result && typeof res.result === 'object') structuredCandidates.push(res.result)
+    if (others) structuredCandidates.push(others)
+
+    let outlineCandidate = ''
+    let bodyCandidate = ''
+    let reasoningCandidate = typeof others.reasoning_summary === 'string' ? others.reasoning_summary : ''
+
+    for (const candidate of structuredCandidates) {
+      if (!outlineCandidate) {
+        const outline = findStringByKeys(candidate, ['outline', 'ps_outline', 'outline_text', 'outline_markdown'])
+        if (outline) outlineCandidate = outline
+      }
+      if (!bodyCandidate) {
+        const body = findStringByKeys(candidate, ['body', 'ps_body', 'english_letter', 'english_text', 'text', 'result', 'statement'])
+        if (body) bodyCandidate = body
+      }
+      if (!reasoningCandidate) {
+        const summary = findStringByKeys(candidate, ['reasoning_summary', 'summary', 'analysis'])
+        if (summary) reasoningCandidate = summary
+      }
+      if (outlineCandidate && bodyCandidate && reasoningCandidate) break
+    }
+
+    if (!outlineCandidate && outlineStrings.length) outlineCandidate = outlineStrings[0]
+    if (!bodyCandidate && bodyStrings.length) bodyCandidate = bodyStrings[0]
+
+    const finalOutline = decodeNewlines(outlineCandidate || '').trim()
+    const bodySource = bodyCandidate || bodyStrings[0] || manual || extracted
+    const normalizedBody = ensurePrimaryHeading(decodeNewlines(bodySource || '').trim())
+    const finalBody = normalizedBody.markdown
+    const bodyHeading = normalizedBody.heading
+
+    if (!finalOutline && !finalBody) throw new Error('no_content')
+
+    setAgentStep('写入文档...')
+    const storage = (await getStorage()) || {}
+    const timestamp = Date.now().toString()
+
+    if (outlineId && finalOutline && storage[outlineId]) {
+      await saveResume(outlineId, {
+        ...storage[outlineId],
+        markdown: finalOutline,
+        update: timestamp
+      })
+    }
+    if (bodyId && storage[bodyId]) {
+      await saveResume(bodyId, {
+        ...storage[bodyId],
+        markdown: finalBody || storage[bodyId].markdown,
+        name: bodyHeading || storage[bodyId].name,
+        update: timestamp
+      })
+    }
+
+    if (outlineId && bodyId) {
+      const outlineHash = finalOutline ? psUtils.simpleHash(finalOutline) : undefined
+      psUtils.setPsMetaForPair({ outlineId, bodyId, chatId, initialOutlineHash: outlineHash })
+    }
+
+    const detailMessages: string[] = []
+    const materialMsg = formatMaterial((others as any)?.material)
+    if (materialMsg) detailMessages.push(`【material】\n${materialMsg}`)
+    if (finalOutline) detailMessages.push(`【outline】\n${finalOutline}`)
+    const checksMsg = formatChecks((others as any)?.checks)
+    if (checksMsg) detailMessages.push(`【checks】\n${checksMsg}`)
+    const reasoningMsg = (reasoningCandidate || '').trim()
+    if (reasoningMsg) detailMessages.push(`【推理摘要】\n${reasoningMsg}`)
+    const steps = Array.isArray((others as any)?.steps) ? (others as any).steps : []
+    if (steps.length) detailMessages.push(`【步骤】\n- ${steps.join('\n- ')}`)
+
+    try {
+      const pending = Array.isArray((window as any).__pendingChatMessages)
+        ? (window as any).__pendingChatMessages
+        : ((window as any).__pendingChatMessages = [])
+      pending.push(...detailMessages)
+      const { convStore } = await import('~/data/contextStore')
+      for (const msg of detailMessages) convStore.appendMessage(chatId, 'assistant', msg)
+    } catch {}
+
+    try { localStorage.setItem(`ps_seed_${chatId}`, JSON.stringify({ outline: finalOutline, body: finalBody })) } catch {}
+
+    ;(toast as any).import(true)
+    uploadFile.value = null
+    if (uploadInputRef.value) uploadInputRef.value.value = ''
+    initialText.value = ''
+    projectInfo.value = ''
+    studentInfo.value = ''
+
+    setAgentStep('跳转编辑器...')
+    router.push(localePath(`/edit/${outlineId}`))
   } catch (error) {
-    console.error('[PS Create] failed to initialize document', error)
-    try { (toast as any).import(false) } catch {}
+    console.error('[PS Create] failed', error)
+    ;(toast as any).import(false)
+    if (chatId) try { localStorage.removeItem(`ps_seed_${chatId}`) } catch {}
+    try {
+      if (outlineId) await deleteResume(outlineId)
+      if (bodyId) await deleteResume(bodyId)
+    } catch {}
   } finally {
     psSubmitting.value = false
     setAgentStep('')
   }
-
-  if (outlineId) router.push(localePath(`/edit/${outlineId}`))
 }
 
 const createTemplateCv = async () => {
@@ -578,6 +811,24 @@ const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
   for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
   if (typeof btoa === 'function') return btoa(binary)
   return BufferImpl ? BufferImpl.from(binary, 'binary').toString('base64') : ''
+}
+
+const textToBase64 = (text: string): string => {
+  if (!text) return ''
+  const BufferImpl = getBuffer()
+  if (typeof window === 'undefined' && BufferImpl) {
+    return BufferImpl.from(text, 'utf-8').toString('base64')
+  }
+  try {
+    if (typeof btoa === 'function') {
+      return btoa(unescape(encodeURIComponent(text)))
+    }
+  } catch {}
+  const encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null
+  if (encoder) {
+    return arrayBufferToBase64(encoder.encode(text).buffer)
+  }
+  return ''
 }
 
 const base64ToUint8Array = (b64: string): Uint8Array => {
@@ -919,31 +1170,25 @@ const confirmCreateCv = async () => {
   cvSubmitting.value = true
   setAgentStep('准备生成简历...')
   try {
-    const uploadUrl = backendBase.value ? `${backendBase.value}/api/files/upload` : '/api/files/upload'
     let fileId: string | null = null
+    const originalName = cvName.value || 'upload.bin'
+    const originalMime = guessFileMime(originalName)
     if (cvBase64.value) {
       setAgentStep('上传附件...')
-      const up: any = await $fetch(uploadUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: { name: cvName.value || 'upload.bin', contentBase64: cvBase64.value, purpose: 'user_data' }
+      fileId = await uploadSupportFile({
+        backendBase: backendBase.value,
+        name: originalName,
+        contentBase64: cvBase64.value,
+        purpose: 'user_data',
+        contentType: originalMime || undefined
       })
-      if (!up || up.status !== 'ok' || !up.file || !up.file.id) throw new Error('upload_failed')
-      fileId = up.file.id as string
     }
 
     // 附件占位，便于 Chatbot 侧展示
     try {
       if (fileId) {
-        const name = cvName.value || 'upload.bin'
-        const lower = name.toLowerCase()
-        const mime = /\.pdf$/.test(lower) ? 'application/pdf'
-          : /\.docx$/.test(lower) ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-          : /\.doc$/.test(lower) ? 'application/msword'
-          : /\.md$/.test(lower) ? 'text/markdown'
-          : /\.txt$/.test(lower) ? 'text/plain'
-          : ''
-        const payload = { images: [], files: [{ id: fileId, name, mime }] }
+        const mime = originalMime
+        const payload = { images: [], files: [{ id: fileId, name: originalName, mime }] }
         const marker = '[[ATTACHMENTS]]' + JSON.stringify(payload)
         const pending = Array.isArray((window as any).__pendingChatMessages)
           ? (window as any).__pendingChatMessages
@@ -1068,9 +1313,7 @@ const confirmCreateCv = async () => {
 
     const directResult = typeof res?.result === 'string' ? res.result.trim() : ''
     if (directResult) {
-      markdown = unescapeNewlines(directResult)
-      const headingMatch = markdown.match(/^##+\s*(.+)$/m)
-      if (headingMatch) resumeName = headingMatch[1].trim()
+      markdown = directResult
     } else {
       others = res?.others || {}
     }
@@ -1147,11 +1390,9 @@ const confirmCreateCv = async () => {
       } catch {}
     }
 
-    markdown = unescapeNewlines(markdown || '').trim()
-    if (!resumeName && markdown) {
-      const headingMatch = markdown.match(/^##+\s*(.+)$/m)
-      if (headingMatch) resumeName = headingMatch[1].trim()
-    }
+    const normalizedPrimary = ensurePrimaryHeading(unescapeNewlines(markdown || '').trim())
+    markdown = normalizedPrimary.markdown
+    if (!resumeName && normalizedPrimary.heading) resumeName = normalizedPrimary.heading
     if (!markdown) throw new Error('no_content')
 
     const detailMessages: string[] = []
@@ -1215,7 +1456,7 @@ const confirmCreateCv = async () => {
       }
     } catch {}
 
-    try { localStorage.setItem('doc_meta_' + id, JSON.stringify({ docType: 'cv', lang: lang.value })) } catch {}
+    setDocMeta(id, { docType: 'cv', lang: lang.value })
     setAgentStep('跳转编辑器...')
     router.push(localePath(`/edit/${id}`))
   } catch (error) {
@@ -1238,27 +1479,21 @@ const confirmCreateRec = async () => {
   setAgentStep('准备生成推荐信...')
   try {
     let fileId: string | null = null
+    const originalName = recName.value || 'upload.bin'
+    const originalMime = guessFileMime(originalName)
     if (recBase64.value) {
       setAgentStep('上传附件...')
-      const up: any = await $fetch(`${backendBase.value}/api/files/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: { name: recName.value || 'upload.bin', contentBase64: recBase64.value, purpose: 'user_data' }
+      fileId = await uploadSupportFile({
+        backendBase: backendBase.value,
+        name: originalName,
+        contentBase64: recBase64.value,
+        purpose: 'user_data',
+        contentType: originalMime || undefined
       })
-      if (!up || up.status !== 'ok' || !up.file || !up.file.id) throw new Error('upload_failed')
-      fileId = up.file.id as string
     }
     // 记录附件消息，供 Chatbot 展示与预览
     try {
-      const name = recName.value || 'upload.bin'
-      const lower = name.toLowerCase()
-      const mime = /\.pdf$/.test(lower) ? 'application/pdf'
-        : /\.docx$/.test(lower) ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        : /\.doc$/.test(lower) ? 'application/msword'
-        : /\.md$/.test(lower) ? 'text/markdown'
-        : /\.txt$/.test(lower) ? 'text/plain'
-        : ''
-      const payload = { images: [], files: [{ id: fileId, name, mime }] }
+      const payload = { images: [], files: [{ id: fileId, name: originalName, mime: originalMime }] }
       const marker = '[[ATTACHMENTS]]' + JSON.stringify(payload)
       ;(window as any).__pendingChatMessages = ((window as any).__pendingChatMessages || [])
       ;(window as any).__pendingChatMessages.unshift(marker)
@@ -1448,7 +1683,7 @@ const confirmCreateRec = async () => {
         ;(window as any).__pendingChatMessages = []
       }
     } catch {}
-    try { localStorage.setItem('doc_meta_' + id, JSON.stringify({ docType: 'rec', lang: lang.value })) } catch {}
+    setDocMeta(id, { docType: 'rec', lang: lang.value })
     setAgentStep('跳转编辑器...')
     router.push(localePath(`/edit/${id}`))
   } catch (e) {

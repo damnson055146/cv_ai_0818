@@ -7,29 +7,56 @@ dotenv.config();
 // Also try site/configs/.env during dev/start
 dotenv.config({ path: "./configs/.env" });
 const SITE_URL = process.env.NUXT_PUBLIC_SITE_URL || process.env.SITE_URL || "http://localhost:3000";
+const sanitizeEnv = (value?: string | null) => (value && value.trim() !== "" ? value : undefined);
+const sanitizeHostEnv = (value?: string | null) => {
+  const sanitized = sanitizeEnv(value);
+  return sanitized && sanitized !== "0.0.0.0" && sanitized !== "::" ? sanitized : undefined;
+};
 const DEV_HMR_HOST =
-  process.env.NUXT_VITE_HMR_HOST ||
-  process.env.NUXT_PUBLIC_HMR_HOST ||
-  process.env.NUXT_DEV_HMR_HOST ||
-  process.env.HMR_HOST ||
-  "";
-const DEV_HMR_PORT = process.env.NUXT_VITE_HMR_PORT || process.env.NUXT_PUBLIC_HMR_PORT || process.env.HMR_PORT;
+  sanitizeHostEnv(process.env.NUXT_VITE_HMR_HOST) ||
+  sanitizeHostEnv(process.env.NUXT_PUBLIC_HMR_HOST) ||
+  sanitizeHostEnv(process.env.NUXT_DEV_HMR_HOST) ||
+  sanitizeHostEnv(process.env.HMR_HOST);
+const DEV_HMR_PORT =
+  sanitizeEnv(process.env.NUXT_VITE_HMR_PORT) ||
+  sanitizeEnv(process.env.NUXT_PUBLIC_HMR_PORT) ||
+  sanitizeEnv(process.env.HMR_PORT);
 const DEV_HMR_PROTOCOL =
-  process.env.NUXT_VITE_HMR_PROTOCOL ||
-  process.env.NUXT_PUBLIC_HMR_PROTOCOL ||
-  process.env.HMR_PROTOCOL ||
+  sanitizeEnv(process.env.NUXT_VITE_HMR_PROTOCOL) ||
+  sanitizeEnv(process.env.NUXT_PUBLIC_HMR_PROTOCOL) ||
+  sanitizeEnv(process.env.HMR_PROTOCOL) ||
   "ws";
-const DEV_HMR_PATH = process.env.NUXT_VITE_HMR_PATH || process.env.NUXT_PUBLIC_HMR_PATH || "";
-const resolvedHmrConfig = DEV_HMR_HOST
+const DEV_HMR_PATH = sanitizeEnv(process.env.NUXT_VITE_HMR_PATH) || sanitizeEnv(process.env.NUXT_PUBLIC_HMR_PATH) || "";
+
+const shouldForceDynamicHmr = process.env.NUXT_VITE_HMR_DYNAMIC === 'true';
+const isProd = process.env.NODE_ENV === "production";
+const buildAssetsDir = isProd ? "assets" : "/_nuxt/";
+const devServerPort = Number(process.env.PORT || 3000);
+const parsedSiteUrl = (() => {
+  try {
+    return new URL(SITE_URL);
+  } catch {
+    return null;
+  }
+})();
+const fallbackHmrHost = DEV_HMR_HOST ||
+  (parsedSiteUrl?.hostname && parsedSiteUrl.hostname !== "0.0.0.0" && parsedSiteUrl.hostname !== "::"
+    ? parsedSiteUrl.hostname
+    : undefined);
+const fallbackHmrPort = DEV_HMR_PORT
+  ? Number(DEV_HMR_PORT)
+  : parsedSiteUrl?.port
+    ? Number(parsedSiteUrl.port)
+    : devServerPort;
+const resolvedHmrConfig = !isProd
   ? {
       protocol: DEV_HMR_PROTOCOL,
-      host: DEV_HMR_HOST,
-      port: DEV_HMR_PORT ? Number(DEV_HMR_PORT) : undefined,
+      host: fallbackHmrHost,
+      port: fallbackHmrPort,
+      clientPort: fallbackHmrPort,
       path: DEV_HMR_PATH || undefined
     }
   : undefined;
-
-const shouldForceDynamicHmr = process.env.NUXT_VITE_HMR_DYNAMIC === 'true';
 
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
@@ -43,7 +70,7 @@ export default defineNuxtConfig({
     "@pinia/nuxt",
     "@nuxtjs/i18n",
     "@nuxtjs/color-mode",
-    "@vite-pwa/nuxt",
+    ...(isProd ? ["@vite-pwa/nuxt"] : []),
     "nuxt-simple-sitemap"
   ],
 
@@ -191,7 +218,7 @@ export default defineNuxtConfig({
     // Else if host it on https://example.com/resume
     //    baseURL: '/resume/'
     baseURL: process.env.NUXT_APP_BASE_URL || '/', // override with NUXT_APP_BASE_URL='/' in dev
-    buildAssetsDir: 'assets', // don't use "_" at the begining of the folder name to avoids
+    buildAssetsDir, // use Nuxt default in dev but keep 'assets' for production hosting
     head: {
       viewport: "width=device-width,initial-scale=1",
       link: [
@@ -214,7 +241,7 @@ export default defineNuxtConfig({
     url: SITE_URL
   },
 
-  pwa,
+  pwa: isProd ? pwa : undefined,
 
   vite: {
     resolve: {

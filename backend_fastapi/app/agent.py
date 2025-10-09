@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from .db import ensure_prompts_table, get_prompt, set_prompt, list_prompts
+from .db import ensure_prompts_table, get_prompt, set_prompt, list_prompts, consume_chat_memory
 import json
 
 
@@ -127,6 +127,34 @@ async def agent_act(body: dict, request: Request):
         doc_text = str((editor_state or {}).get("doc") or "")
         has_selection = bool(selection.get("hasSelection"))
         selected_text = str(selection.get("text") or "")
+
+    # Merge any persisted chat memory for first-message bootstrapping
+    memory_candidates: list[str] = []
+    explicit_chat = str(body.get("chat_id") or body.get("chatId") or "").strip()
+    if explicit_chat:
+        memory_candidates.append(explicit_chat)
+    if doc_id:
+        memory_candidates.append(doc_id)
+    appended_memory = False
+    for candidate in memory_candidates:
+        if not candidate:
+            continue
+        try:
+            memory_payload = consume_chat_memory(candidate)
+        except Exception:
+            memory_payload = []
+        if not memory_payload:
+            continue
+        for item in memory_payload:
+            if isinstance(item, dict):
+                text = str(item.get("content") or "").strip()
+            else:
+                text = str(item or "").strip()
+            if text:
+                inline_snippets.append(text)
+                appended_memory = True
+        if appended_memory:
+            break
 
     # ---- Decide doc type (cv|ps|rec) ----
     def _detect_doc_type(instr: str, text: str, sel: str) -> str:
@@ -585,4 +613,3 @@ async def seed_ps_system_from_files(request: Request, body: dict | None = None):
     if saved == 0:
         raise HTTPException(status_code=400, detail="no content resolved from files or text")
     return JSONResponse(status_code=200, content={"ok": True, "saved": saved})
-
