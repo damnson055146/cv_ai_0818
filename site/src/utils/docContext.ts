@@ -18,26 +18,44 @@ export interface DocumentContext {
 }
 
 const DOC_META_PREFIX = "doc_meta_";
+const DOC_META_MEMORY_KEY = "__psDocMetaMemory__";
+
+const getGlobal = () => (typeof window !== "undefined" ? window : globalThis) as any;
+
+const getDocMetaMemory = () => {
+  const globalObj = getGlobal();
+  if (!globalObj[DOC_META_MEMORY_KEY]) globalObj[DOC_META_MEMORY_KEY] = new Map<string, StoredDocMeta>();
+  return globalObj[DOC_META_MEMORY_KEY] as Map<string, StoredDocMeta>;
+};
 
 const hasWindow = () => typeof window !== "undefined";
 
 const readDocMeta = (docId: string): StoredDocMeta | null => {
-  if (!docId || !hasWindow()) return null;
+  if (!docId) return null;
+  const memory = getDocMetaMemory();
+  const fromMemory = memory.get(docId);
+  if (fromMemory) return fromMemory;
+  if (!hasWindow()) return null;
   try {
     const raw = localStorage.getItem(DOC_META_PREFIX + docId);
     if (!raw) return null;
-    return JSON.parse(raw) as StoredDocMeta;
+    const parsed = JSON.parse(raw) as StoredDocMeta;
+    memory.set(docId, parsed);
+    return parsed;
   } catch {
     return null;
   }
 };
 
 export const setDocMeta = (docId: string, meta: StoredDocMeta & { docType: DocumentType }): void => {
-  if (!docId || !hasWindow()) return;
-  const payload: StoredDocMeta & { docType: DocumentType } = {
-    docType: meta.docType,
-  };
+  if (!docId) return;
+  const payload: StoredDocMeta & { docType: DocumentType } = { docType: meta.docType };
   if (meta.lang) payload.lang = meta.lang;
+
+  const memory = getDocMetaMemory();
+  memory.set(docId, payload);
+
+  if (!hasWindow()) return;
   try {
     localStorage.setItem(DOC_META_PREFIX + docId, JSON.stringify(payload));
   } catch {
@@ -52,7 +70,10 @@ export const createChatId = (prefix = "chat"): string => {
   return `${prefix}_${base}${randomSegment()}`;
 };
 
-export const createDocId = (): string => Date.now().toString();
+export const createDocId = (): string => {
+  const timePart = Date.now().toString(36);
+  return `${timePart}${randomSegment()}`;
+};
 
 export const resolveDocumentContext = (options?: {
   docId?: string | null;

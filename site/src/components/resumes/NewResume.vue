@@ -315,6 +315,77 @@ const ensurePrimaryHeading = (markdown: string): { markdown: string; heading: st
   return { markdown, heading: '' }
 }
 
+const outlineTitleKeys = ['title', 'heading', 'section', 'name', 'label', 'topic', 'headline']
+const outlineNumberKeys = ['order', 'index', 'number', 'step', 'position']
+const outlineChildKeys = ['points', 'bullets', 'details', 'items', 'subsections', 'children', 'summary', 'content', 'paragraphs', 'highlights', 'support', 'examples', 'subpoints', 'subitems', 'sections', 'elements', 'notes', 'outline', 'steps', 'body']
+
+const renderOutlineStructure = (value: any): string => {
+  if (!value) return ''
+  if (typeof value === 'string') return value.trim()
+
+  const seen = new WeakSet<object>()
+  const lines: string[] = []
+
+  const addLine = (text: string, depth: number) => {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    if (depth === 0) {
+      if (lines.length && lines[lines.length - 1] !== '') lines.push('')
+      lines.push(trimmed.startsWith('#') ? trimmed : `## ${trimmed}`)
+      return
+    }
+    const indent = '  '.repeat(Math.max(0, depth - 1))
+    const sanitized = trimmed.replace(/^[-*•]\s+/, '').trim()
+    lines.push(`${indent}- ${sanitized || trimmed}`)
+  }
+
+  const visit = (node: any, depth: number) => {
+    if (!node) return
+    if (typeof node === 'string') {
+      addLine(node, depth)
+      return
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item, depth)
+      return
+    }
+    if (typeof node === 'object') {
+      if (seen.has(node)) return
+      seen.add(node)
+      const obj = node as Record<string, any>
+      const title = outlineTitleKeys.map((key) => (typeof obj[key] === 'string' ? obj[key].trim() : '')).find(Boolean)
+      let numbering = ''
+      for (const key of outlineNumberKeys) {
+        if (typeof obj[key] === 'number') {
+          numbering = `${obj[key]}. `
+          break
+        }
+        if (typeof obj[key] === 'string' && obj[key].trim()) {
+          numbering = `${obj[key].trim()} `
+          break
+        }
+      }
+      if (title) addLine(`${numbering}${title}`.trim(), depth)
+      let childHandled = false
+      for (const key of outlineChildKeys) {
+        if (obj[key] === undefined) continue
+        visit(obj[key], title ? depth + 1 : depth)
+        childHandled = true
+      }
+      if (!childHandled) {
+        for (const key of Object.keys(obj)) {
+          if (outlineTitleKeys.includes(key) || outlineChildKeys.includes(key) || outlineNumberKeys.includes(key)) continue
+          visit(obj[key], title ? depth + 1 : depth)
+        }
+      }
+    }
+  }
+
+  visit(value, 0)
+  const text = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  return text
+}
+
 const setLang = (l: Lang) => { lang.value = l }
 const canConfirm = computed(() => {
   if (curDoc.value === 'ps') {
@@ -497,30 +568,76 @@ const confirmCreate = async () => {
     const trimmed = text.trim()
     return (trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))
   }
-  const findStringByKeys = (value: any, keys: string[], visited = new WeakSet<object>()): string => {
-    if (!value) return ''
-    if (typeof value === 'string') return value.trim()
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const found = findStringByKeys(item, keys, visited)
-        if (found) return found
+  const looksLikeOutlineText = (text: string) => {
+    if (!text) return false
+    const headingMatches = text.match(/^#{1,3}\s+/gm)?.length || 0
+    const numberedMatches = text.match(/^\s*(?:\d+[.)]|[IVX]+\.)\s+/gim)?.length || 0
+    const bulletMatches = text.match(/^\s*[-*•]\s+/gm)?.length || 0
+    const sectionSignals = headingMatches + numberedMatches
+    if (sectionSignals >= 2) return true
+    if (sectionSignals >= 1 && bulletMatches >= 2) return true
+    if (bulletMatches >= 4) return true
+    return /大纲|outline/i.test(text)
+  }
+  const extractByKeys = (value: any, keys: string[], options?: { transform?: (input: any) => string }): string => {
+    const visited = new WeakSet<object>()
+    const transform = options?.transform
+
+    const collectAll = (input: any): string => {
+      if (!input) return ''
+      if (typeof input === 'string') return input.trim()
+      if (transform) {
+        try {
+          const transformed = transform(input)
+          if (transformed) return transformed.trim()
+        } catch {}
+      }
+      const seen = new WeakSet<object>()
+      const gather = (node: any): string[] => {
+        if (!node) return []
+        if (typeof node === 'string') return [node.trim()]
+        if (Array.isArray(node)) return node.flatMap((item) => gather(item))
+        if (typeof node === 'object') {
+          if (seen.has(node)) return []
+          seen.add(node)
+          const obj = node as Record<string, any>
+          return Object.keys(obj).flatMap((key) => gather(obj[key]))
+        }
+        return []
+      }
+      return gather(input).filter(Boolean).join('\n\n').trim()
+    }
+
+    const walk = (node: any): string => {
+      if (!node) return ''
+      if (typeof node === 'string') return node.trim()
+      if (Array.isArray(node)) {
+        for (const item of node) {
+          const found = walk(item)
+          if (found) return found
+        }
+        return ''
+      }
+      if (typeof node === 'object') {
+        if (visited.has(node)) return ''
+        visited.add(node)
+        const obj = node as Record<string, any>
+        for (const key of keys) {
+          if (Object.prototype.hasOwnProperty.call(obj, key)) {
+            const result = collectAll(obj[key])
+            if (result) return result
+          }
+        }
+        for (const key of Object.keys(obj)) {
+          if (keys.includes(key)) continue
+          const result = walk(obj[key])
+          if (result) return result
+        }
       }
       return ''
     }
-    if (typeof value === 'object') {
-      if (visited.has(value)) return ''
-      visited.add(value)
-      for (const key of keys) {
-        const found = findStringByKeys((value as any)[key], keys, visited)
-        if (found) return found
-      }
-      for (const key of Object.keys(value as any)) {
-        if (keys.includes(key)) continue
-        const found = findStringByKeys((value as any)[key], keys, visited)
-        if (found) return found
-      }
-    }
-    return ''
+
+    return walk(value).trim()
   }
 
   try {
@@ -596,7 +713,7 @@ const confirmCreate = async () => {
 
     const reqBody: any = {
       doc_type: 'ps',
-      max_output_tokens: 8192,
+      max_output_tokens: 32768,
       reasoning_effort: 'medium'
     }
     if (lang.value) reqBody.language = lang.value
@@ -618,7 +735,8 @@ const confirmCreate = async () => {
     const outlineStrings: string[] = []
     const bodyStrings: string[] = []
 
-    if (typeof others.outline === 'string') outlineStrings.push(others.outline)
+    const normalizedOutlineFromOthers = renderOutlineStructure((others as any)?.outline)
+    if (normalizedOutlineFromOthers) outlineStrings.push(normalizedOutlineFromOthers)
     if (typeof res?.result === 'string') bodyStrings.push(res.result)
     if (typeof res?.output_text === 'string') {
       const text = res.output_text.trim()
@@ -628,7 +746,8 @@ const confirmCreate = async () => {
             structuredCandidates.push(JSON.parse(text))
           } catch {}
         } else {
-          bodyStrings.push(text)
+          if (looksLikeOutlineText(text)) outlineStrings.push(text)
+          else bodyStrings.push(text)
         }
       }
     }
@@ -641,7 +760,10 @@ const confirmCreate = async () => {
           if (chunk && typeof chunk.json === 'object') structuredCandidates.push(chunk.json)
           if (typeof chunk.text === 'string') {
             const txt = chunk.text.trim()
-            if (txt) bodyStrings.push(txt)
+            if (txt) {
+              if (looksLikeOutlineText(txt)) outlineStrings.push(txt)
+              else bodyStrings.push(txt)
+            }
           }
         }
       }
@@ -656,21 +778,25 @@ const confirmCreate = async () => {
 
     for (const candidate of structuredCandidates) {
       if (!outlineCandidate) {
-        const outline = findStringByKeys(candidate, ['outline', 'ps_outline', 'outline_text', 'outline_markdown'])
+        const outline = extractByKeys(candidate, ['outline', 'ps_outline', 'outline_text', 'outline_markdown'], { transform: renderOutlineStructure })
         if (outline) outlineCandidate = outline
       }
       if (!bodyCandidate) {
-        const body = findStringByKeys(candidate, ['body', 'ps_body', 'english_letter', 'english_text', 'text', 'result', 'statement'])
+        const body = extractByKeys(candidate, ['body', 'ps_body', 'english_letter', 'english_text', 'text', 'result', 'statement'])
         if (body) bodyCandidate = body
       }
       if (!reasoningCandidate) {
-        const summary = findStringByKeys(candidate, ['reasoning_summary', 'summary', 'analysis'])
+        const summary = extractByKeys(candidate, ['reasoning_summary', 'summary', 'analysis'])
         if (summary) reasoningCandidate = summary
       }
       if (outlineCandidate && bodyCandidate && reasoningCandidate) break
     }
 
-    if (!outlineCandidate && outlineStrings.length) outlineCandidate = outlineStrings[0]
+    if (!outlineCandidate && outlineStrings.length) {
+      const uniqueOutlinePieces = Array.from(new Set(outlineStrings.map((item) => item.trim()).filter(Boolean)))
+      const mergedOutline = uniqueOutlinePieces.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()
+      if (mergedOutline) outlineCandidate = mergedOutline
+    }
     if (!bodyCandidate && bodyStrings.length) bodyCandidate = bodyStrings[0]
 
     const finalOutline = decodeNewlines(outlineCandidate || '').trim()
@@ -1199,7 +1325,7 @@ const confirmCreateCv = async () => {
 
     const reqBody: any = {
       doc_type: 'cv',
-      max_output_tokens: 8192,
+      max_output_tokens: 32768,
       reasoning_effort: 'medium',
       template_key: buildTemplateKey('cv', lang.value)
     }
@@ -1498,7 +1624,7 @@ const confirmCreateRec = async () => {
       ;(window as any).__pendingChatMessages = ((window as any).__pendingChatMessages || [])
       ;(window as any).__pendingChatMessages.unshift(marker)
     } catch {}
-    const reqBody: any = { max_output_tokens: 8192, reasoning_effort: 'medium' }
+    const reqBody: any = { max_output_tokens: 32768, reasoning_effort: 'medium' }
     // New unified create endpoint requires doc_type; also pass language
     reqBody.doc_type = 'rec'
     if (lang.value) reqBody.language = lang.value

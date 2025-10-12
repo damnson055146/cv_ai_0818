@@ -4,11 +4,11 @@
       <template #middle>
         <div class="hstack items-center">
           <RenameResume />
-          <PsSwitcher />
         </div>
       </template>
 
       <template #tail>
+        <PsSwitcher />
         <SaveResume />
         
         <!-- 工具栏方案切换器 -->
@@ -91,6 +91,8 @@ import ToolbarScheme3 from "~/components/edit/ToolbarScheme3.vue";
 import MdSidebarScheme1 from "~/components/edit/toolbar/MdSidebarScheme1.vue";
 import MdSidebarScheme2 from "~/components/edit/toolbar/MdSidebarScheme2.vue";
 import MdSidebarScheme3 from "~/components/edit/toolbar/MdSidebarScheme3.vue";
+import type { PsDocMeta, PsDocSubtype } from "~/utils/ps";
+import { ensurePsMetaForDoc, getPsMeta, markOutlineComplete, simpleHash, updateBaselineForBody } from "~/utils/ps";
 
 
 // Horizontal splitpane
@@ -105,10 +107,17 @@ const api = computed(() => splitter.connect(state.value, send, normalizeProps));
 
 // Fetch resume data (client-only to avoid SSR errors)
 const route = useRoute();
-onMounted(async () => {
-  const id = route.params.id as string;
-  const ok = await switchResume(id);
-  if (!ok) {
+const shownSeedDiffFor = new Set<string>();
+
+const loadResume = async (
+  id: string,
+  options: { createIfMissing?: boolean; triggerSeedDiff?: boolean } = {}
+) => {
+  if (!id) return;
+  const { createIfMissing = false, triggerSeedDiff = true } = options;
+
+  let ok = await switchResume(id);
+  if (!ok && createIfMissing) {
     const { DEFAULT_STYLES, DEFAULT_NAME, DEFAULT_MD_CONTENT, DEFAULT_CSS_CONTENT } = await import("~/utils");
     const { saveResume } = await import("~/utils/database");
     await saveResume(id, {
@@ -118,29 +127,36 @@ onMounted(async () => {
       styles: DEFAULT_STYLES,
       update: id
     } as any);
-    await switchResume(id);
+    ok = await switchResume(id);
   }
-  // 如果是新建的 PS 且存在种子建议，则触发 Diff 预览应用流程（通过全局事件让 Chatbot 弹窗）
+  if (!ok) return;
+
+  if (!triggerSeedDiff || shownSeedDiffFor.has(id)) return;
+
   try {
-    const rawMeta = localStorage.getItem('ps_doc_meta_' + id)
-    const meta = rawMeta ? JSON.parse(rawMeta) : null
-    if (meta && meta.docType === 'ps' && meta.chatId) {
-      const seedRaw = localStorage.getItem('ps_seed_' + meta.chatId)
+    const meta = getPsMeta(id);
+    if (meta && meta.chatId) {
+      const seedRaw = localStorage.getItem('ps_seed_' + meta.chatId);
       if (seedRaw) {
-        const seed = JSON.parse(seedRaw)
-        // 构造建议文本：若当前子类型为 outline 用 seed.outline，否则用 seed.body
-        const suggested = meta.sub === 'outline' ? (seed?.outline || '') : (seed?.body || '')
+        const seed = JSON.parse(seedRaw);
+        const suggested = meta.sub === 'outline' ? (seed?.outline || '') : (seed?.body || '');
         if (suggested && typeof suggested === 'string') {
           const ev = new CustomEvent('show-initial-ps-seed-diff', {
             detail: {
               suggestedText: suggested
             }
-          })
-          window.dispatchEvent(ev)
+          });
+          window.dispatchEvent(ev);
+          shownSeedDiffFor.add(id);
         }
       }
     }
   } catch {}
+};
+
+onMounted(async () => {
+  const id = route.params.id as string;
+  await loadResume(id, { createIfMissing: true, triggerSeedDiff: true });
 });
 
 // Toggle toolbar
@@ -178,32 +194,89 @@ const currentLeftSidebarComponent = computed(() => {
 });
 
 // ===== PS 大纲/正文 gating =====
-const psMeta = ref<any | null>(null)
+const psMeta = ref<PsDocMeta | null>(null)
 const showOutlineChangedWarning = ref(false)
 
-onMounted(() => {
+const hydratePsMeta = async (docId: string) => {
+  psMeta.value = null
+  showOutlineChangedWarning.value = false
+  if (!docId) return
+
   try {
-    const id = route.params.id as string
-    const raw = localStorage.getItem('ps_doc_meta_' + id)
-    psMeta.value = raw ? JSON.parse(raw) : null
-    if (psMeta.value?.sub === 'body') {
-      // 对比baseline
-      const outlineId = psMeta.value.siblingId
-      const storageGetter = (window as any).localforage?.getItem || null
-      // 轻量：通过事件从编辑器获取内容hash
-      const askContent = () => new Promise<string>((resolve) => {
-        const ev = new CustomEvent('get-document-content', { detail: { callback: resolve } })
-        document.dispatchEvent(ev)
-        setTimeout(() => resolve(''), 800)
-      })
-      askContent().then((bodyContent) => {
-        // 读取大纲内容需要切换/或单独保存hash。这里仅基于baselineHash提示
-        if (psMeta.value?.baselineOutlineHash) {
-          showOutlineChangedWarning.value = true
-        }
-      })
+    const metaValue = getPsMeta(docId)
+    if (metaValue) {
+      psMeta.value = metaValue
+      showOutlineChangedWarning.value = Boolean(metaValue.sub === 'body' && metaValue.baselineOutlineHash)
+      return
     }
   } catch {}
+
+  try {
+    const ensured = await ensurePsMetaForDoc(docId)
+    if (ensured) {
+      psMeta.value = ensured
+      showOutlineChangedWarning.value = Boolean(ensured.sub === 'body' && ensured.baselineOutlineHash)
+      return
+    }
+  } catch {}
+
+  if (typeof localStorage === 'undefined') return
+
+  try {
+    const raw = localStorage.getItem('ps_doc_meta_' + docId)
+    if (raw) {
+      const parsed = JSON.parse(raw) as PsDocMeta
+      psMeta.value = parsed
+      showOutlineChangedWarning.value = Boolean(parsed.sub === 'body' && parsed.baselineOutlineHash)
+      return
+    }
+  } catch {}
+
+  try {
+    const docRaw = localStorage.getItem('doc_meta_' + docId)
+    if (docRaw) {
+      const docMeta = JSON.parse(docRaw) as { docType?: string; siblingId?: string; chatId?: string; sub?: PsDocSubtype }
+      if (docMeta?.docType === 'ps') {
+        psMeta.value = {
+          docType: 'ps',
+          sub: docMeta.sub ?? 'outline',
+          chatId: docMeta.chatId || docId,
+          siblingId: docMeta.siblingId || ''
+        }
+      }
+    }
+  } catch {}
+}
+
+const handlePsMetaUpdate = (event: Event) => {
+  try {
+    const detail = (event as CustomEvent<{ id: string; meta: PsDocMeta }>).detail
+    if (!detail?.meta || !detail.id) return
+    const currentId = route.params.id as string
+    if (!currentId) return
+    if (detail.id === currentId || detail.meta.siblingId === currentId) {
+      void hydratePsMeta(currentId)
+    }
+  } catch {}
+}
+
+onMounted(() => {
+  const id = route.params.id as string
+  void hydratePsMeta(id)
+  if (typeof window !== 'undefined') window.addEventListener('ps-meta-updated', handlePsMetaUpdate)
+})
+
+watch(
+  () => route.params.id as string,
+  (id, prev) => {
+    if (!id || id === prev) return
+    void loadResume(id, { triggerSeedDiff: true })
+    void hydratePsMeta(id)
+  }
+)
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') window.removeEventListener('ps-meta-updated', handlePsMetaUpdate)
 })
 
 function completeOutline() {
@@ -211,7 +284,7 @@ function completeOutline() {
     if (!psMeta.value) return
     const chatId = psMeta.value.chatId
     // 标记完成
-    localStorage.setItem('ps_outline_status_' + chatId, '1')
+    markOutlineComplete(chatId, true)
     // 计算大纲hash并写入到正文baseline
     const askContent = () => new Promise<string>((resolve) => {
       const ev = new CustomEvent('get-document-content', { detail: { callback: resolve } })
@@ -219,20 +292,11 @@ function completeOutline() {
       setTimeout(() => resolve(''), 800)
     })
     askContent().then((outlineContent) => {
-      const hash = (() => {
-        let h = 0
-        for (let i = 0; i < outlineContent.length; i++) { h = (h << 5) - h + outlineContent.charCodeAt(i); h |= 0 }
-        return String(h >>> 0)
-      })()
-      // 更新正文元数据baseline
+      const hash = simpleHash(outlineContent)
       try {
-        const bodyId = psMeta.value.siblingId
-        const raw = localStorage.getItem('ps_doc_meta_' + bodyId)
-        if (raw) {
-          const meta = JSON.parse(raw)
-          meta.baselineOutlineHash = hash
-          localStorage.setItem('ps_doc_meta_' + bodyId, JSON.stringify(meta))
-        }
+        const bodyId = psMeta.value?.siblingId
+        if (bodyId) updateBaselineForBody(bodyId, hash)
+        if (psMeta.value) psMeta.value.baselineOutlineHash = hash
       } catch {}
       // 跳转到正文
       const localePath = useLocalePath()

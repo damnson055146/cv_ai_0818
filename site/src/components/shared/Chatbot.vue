@@ -166,13 +166,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRuntimeConfig } from '#app'
 import { useDataStore } from '~/composables/stores/data'
 import { useRoute } from '#imports'
 import Dialog from '~/components/shared/base/Dialog.vue'
 import PromptSettings from '~/components/shared/PromptSettings.vue'
 import { resolveBackendBase } from '~/utils/backendBase'
+import { convStore } from '~/data/contextStore'
+import { resolveDocumentContext } from '~/utils/docContext'
 
 type Role = 'user' | 'assistant'
 interface CursorPreview { result?: string; targets?: any[] }
@@ -180,11 +182,23 @@ interface WorkspaceSelection { hasSelection: boolean; text: string; startLine: n
 interface Message { id: number; role: Role; content: string; preview?: CursorPreview; steps?: string[]; reasoningSummary?: string; stepDetails?: any[]; selectionText?: string }
 interface Attachment { localId: string; name: string; size: number; type: string; file?: File | null; fileId?: string | null; status?: 'pending'|'uploading'|'done'|'error'; progress?: number }
 
+const DEFAULT_ASSISTANT_GREETING = "Hello, I'm Chatbot."
+const HISTORY_LIMIT = 120
+
+const dataStore = useDataStore()
+
+function createGreetingMessage(): Message {
+  return { id: Date.now(), role: 'assistant', content: DEFAULT_ASSISTANT_GREETING }
+}
+
 const mounted = ref(false)
 const isOpen = ref(false)
 const draft = ref('')
-const messages = ref<Message[]>([{ id: Date.now(), role: 'assistant', content: "Hello, I'm Chatbot." }])
+const messages = ref<Message[]>([createGreetingMessage()])
 const isThinking = ref(false)
+
+const currentChatKey = ref<string>('')
+const hasHydratedHistory = ref(false)
 
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const scrollRef = ref<HTMLDivElement | null>(null)
@@ -208,14 +222,98 @@ const isHiddenByRoute = computed(() => hiddenRoutes.includes(route.path))
 
 const canSend = computed(() => draft.value.trim().length > 0 && !isThinking.value)
 
+function computeChatKey(docId?: string): string {
+  const baseId = typeof docId === 'string' ? docId : String((dataStore.data?.curResumeId as any) || '')
+  try {
+    const ctx = resolveDocumentContext({ docId: baseId })
+    if (ctx.chatId) return ctx.chatId
+    if (ctx.docId) return ctx.docId
+  } catch {}
+  return baseId || 'global'
+}
+
+function hydrateMessagesForChat(chatKey: string) {
+  const key = chatKey || 'global'
+  let history: ReturnType<typeof convStore.loadMessages> = []
+  try {
+    history = convStore.loadMessages(key, HISTORY_LIMIT)
+  } catch {
+    history = []
+  }
+
+  if (history.length) {
+    messages.value = history.map((rec) => ({
+      id: rec.timestamp || Date.now() + Math.random(),
+      role: (rec.role === 'user' ? 'user' : 'assistant') as Role,
+      content: rec.content,
+    }))
+  } else {
+    messages.value = [createGreetingMessage()]
+  }
+
+  attachments.value = []
+  lastSelection.value = null
+
+  nextTick(() => {
+    const el = scrollRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+function persistChatMessage(chatKey: string, role: Role, content: string) {
+  const key = (chatKey || '').trim()
+  if (!key) return
+  try {
+    convStore.appendMessage(key, role, content)
+  } catch {}
+}
+
+function pushMessage(
+  msg: Omit<Message, 'id'>,
+  options: { persist?: boolean; chatKey?: string } = {},
+): Message {
+  const entry: Message = { id: Date.now() + Math.random(), ...msg }
+  messages.value.push(entry)
+  nextTick(() => {
+    const el = scrollRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+
+  if (options.persist !== false) {
+    const key = options.chatKey ?? currentChatKey.value
+    persistChatMessage(key, msg.role, msg.content)
+  }
+
+  return entry
+}
+
+function deliverMessage(chatKey: string, msg: Omit<Message, 'id'>, options?: { persist?: boolean }): boolean {
+  const resolvedKey = chatKey || 'global'
+  const shouldPersist = options?.persist !== false
+  if (currentChatKey.value === resolvedKey) {
+    pushMessage(msg, { chatKey: resolvedKey, persist: shouldPersist })
+    return true
+  }
+  if (shouldPersist) persistChatMessage(resolvedKey, msg.role, msg.content)
+  return false
+}
+
+watch(
+  () => String((dataStore.data?.curResumeId as any) || ''),
+  (docId) => {
+    const nextKey = computeChatKey(docId)
+    if (!hasHydratedHistory.value || nextKey !== currentChatKey.value) {
+      currentChatKey.value = nextKey
+      hydrateMessagesForChat(nextKey)
+      hasHydratedHistory.value = true
+    }
+  },
+  { immediate: true },
+)
+
 function toggleOpen() {
   isOpen.value = !isOpen.value
   if (isOpen.value) nextTick(() => inputRef.value?.focus())
-}
-
-function pushMessage(msg: Omit<Message, 'id'>) {
-  messages.value.push({ id: Date.now() + Math.random(), ...msg })
-  nextTick(() => { const el = scrollRef.value; if (el) el.scrollTop = el.scrollHeight })
 }
 
 function hasCursorView(m: Message): boolean { return !!(m.preview || (m.steps && m.steps.length) || m.reasoningSummary) }
@@ -267,14 +365,27 @@ function getClientId(): string { try { const key = 'mcp_client_id'; let id = ses
 function getConversationId(docId: string): string { try { const key = `chat_conv_id_${docId || 'global'}`; let id = sessionStorage.getItem(key) || ''; if (!id) { id = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`; sessionStorage.setItem(key, id) } return id } catch { return `conv_${Date.now()}` } }
 function getPreviousResponseId(docId: string): string | null { try { return sessionStorage.getItem(`chat_prev_resp_${docId || 'global'}`) } catch { return null } }
 function setPreviousResponseId(docId: string, id: string) { try { sessionStorage.setItem(`chat_prev_resp_${docId || 'global'}`, id) } catch {} }
-function getDocType(): string { try { const dataStore = useDataStore(); const direct: string = String((dataStore as any)?.data?.docType || '').toLowerCase(); if (direct && ['cv','ps','rec'].includes(direct)) return direct } catch {}; return '' }
+function getDocType(): string {
+  try {
+    const direct = String((dataStore as any)?.data?.docType || '').toLowerCase()
+    if (direct && ['cv', 'ps', 'rec'].includes(direct)) return direct
+  } catch {}
+  try {
+    const ctx = resolveDocumentContext({ docId: String((dataStore.data?.curResumeId as any) || '') })
+    const inferred = String((ctx?.docType || '')).toLowerCase()
+    if (inferred && ['cv', 'ps', 'rec'].includes(inferred)) return inferred
+  } catch {}
+  return ''
+}
 
 // Session-level prompt management
 const sessionPrompt = ref('')
 const sessionPromptKey = ref('')
 const sessionSaving = ref(false)
 function getAdminToken(): string { try { return localStorage.getItem('prompts_admin_token') || '' } catch { return '' } }
-function getCurrentDocId(): string { try { const dataStore = useDataStore(); return String((dataStore?.data?.curResumeId as any) || '') } catch { return '' } }
+function getCurrentDocId(): string {
+  try { return String((dataStore.data?.curResumeId as any) || '') } catch { return '' }
+}
 function buildSessionPromptKey(): string {
   const docId = getCurrentDocId(); const sessionId = getConversationId(docId)
   return `agent_act_session_prompt:${sessionId}`
@@ -300,37 +411,97 @@ async function saveSessionPrompt() {
 }
 
 async function handleSend() {
-  const text = draft.value.trim(); if (!text || isThinking.value) return
-  pushMessage({ role: 'user', content: text }); draft.value = ''; isThinking.value = true
+  const text = draft.value.trim()
+  if (!text || isThinking.value) return
+
+  const docId = String((dataStore.data?.curResumeId as any) || '')
+  const chatKey = computeChatKey(docId)
+
+  if (!currentChatKey.value) currentChatKey.value = chatKey
+
+  deliverMessage(chatKey, { role: 'user', content: text })
+  draft.value = ''
+  isThinking.value = true
+
   try {
-    const clientId = getClientId(); const dataStore = useDataStore(); const docId = String((dataStore?.data?.curResumeId as any) || ''); const sessionId = getConversationId(docId); const prevId = getPreviousResponseId(docId)
+    const clientId = getClientId()
+    const sessionId = getConversationId(docId)
+    const prevId = getPreviousResponseId(docId)
     const freshSelection = await requestLatestSelection(150)
     const selSnapshot = freshSelection || lastSelection.value
+
     const body: any = { clientId, docId, instruction: text, session_id: sessionId, doc_type: getDocType() }
-    if (selSnapshot && typeof selSnapshot.text === 'string' && selSnapshot.text.trim()) {
-      body.selection = selSnapshot
-    }
-    const fids = attachments.value.map((a) => a.fileId).filter(Boolean) as string[]; if (fids.length) body.file_ids = fids; if (prevId) body.previous_response_id = prevId
+    if (selSnapshot && typeof selSnapshot.text === 'string' && selSnapshot.text.trim()) body.selection = selSnapshot
+
+    const fids = attachments.value.map((a) => a.fileId).filter(Boolean) as string[]
+    if (fids.length) body.file_ids = fids
+    if (prevId) body.previous_response_id = prevId
+
     const res = await fetch(agentUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    if (!res.ok) { const errText = await res.text().catch(() => 'http_error'); pushMessage({ role: 'assistant', content: `请求失败: ${res.status}\n${errText}` }); return }
-    const ct = res.headers.get('content-type') || ''
-    if (!ct.includes('application/json')) { const txt = await res.text().catch(() => ''); pushMessage({ role: 'assistant', content: txt || '请求成功但响应格式不是 JSON' }) }
-    else {
-      const data = await res.json()
-      if (data && data.ok) {
-        let contentText = ''; let steps: string[] | undefined; let reasoningSummary: string | undefined; let mergedTargets: any[] = []
-        const outerTargets = Array.isArray(data?.preview?.targets) ? data.preview.targets : []; if (outerTargets.length) mergedTargets = mergedTargets.concat(outerTargets)
-        const candidate = (data?.preview && data.preview.result) || data?.raw_text || ''
-        const structured = parseMaybeStructured(candidate)
-        if (structured) { if (typeof structured.result === 'string') contentText = structured.result; if (Array.isArray(structured.steps)) steps = structured.steps; if (typeof structured.reasoning_summary === 'string') reasoningSummary = structured.reasoning_summary; if (Array.isArray(structured.targets) && structured.targets.length) mergedTargets = mergedTargets.concat(structured.targets) }
-        else { contentText = String(candidate || '') }
-        if (!steps && Array.isArray(data.steps)) steps = data.steps; if (!reasoningSummary && typeof data.reasoning_summary === 'string') reasoningSummary = data.reasoning_summary
-        pushMessage({ role: 'assistant', content: contentText || '(无返回文本)' })
-        try { const last = messages.value[messages.value.length - 1] as any; if (last && last.role === 'assistant') { last.preview = { result: contentText || undefined, targets: mergedTargets.length ? mergedTargets : (Array.isArray(data?.preview?.targets) ? data.preview.targets : undefined) }; last.steps = steps; last.reasoningSummary = reasoningSummary; last.stepDetails = Array.isArray(data.step_details) ? data.step_details : undefined; if (selSnapshot?.text) last.selectionText = selSnapshot.text } } catch {}
-        try { const rid = data?.meta?.response_id; if (rid) setPreviousResponseId(docId, String(rid)) } catch {}
-      } else { const msg = (data && (data.error?.message || JSON.stringify(data))) || '未知错误'; pushMessage({ role: 'assistant', content: `出错: ${msg}` }) }
+    if (!res.ok) {
+      const errText = await res.text().catch(() => 'http_error')
+      deliverMessage(chatKey, { role: 'assistant', content: `请求失败: ${res.status}\n${errText}` })
+      return
     }
-  } catch (e: any) { pushMessage({ role: 'assistant', content: `网络错误: ${e?.message || e}` }) } finally { isThinking.value = false }
+
+    const ct = res.headers.get('content-type') || ''
+    if (!ct.includes('application/json')) {
+      const txt = await res.text().catch(() => '')
+      deliverMessage(chatKey, { role: 'assistant', content: txt || '请求成功但响应格式不是 JSON' })
+      return
+    }
+
+    const data = await res.json()
+    if (data && data.ok) {
+      let contentText = ''
+      let steps: string[] | undefined
+      let reasoningSummary: string | undefined
+      let mergedTargets: any[] = []
+      const outerTargets = Array.isArray(data?.preview?.targets) ? data.preview.targets : []
+      if (outerTargets.length) mergedTargets = mergedTargets.concat(outerTargets)
+      const candidate = (data?.preview && data.preview.result) || data?.raw_text || ''
+      const structured = parseMaybeStructured(candidate)
+      if (structured) {
+        if (typeof structured.result === 'string') contentText = structured.result
+        if (Array.isArray(structured.steps)) steps = structured.steps
+        if (typeof structured.reasoning_summary === 'string') reasoningSummary = structured.reasoning_summary
+        if (Array.isArray(structured.targets) && structured.targets.length) mergedTargets = mergedTargets.concat(structured.targets)
+      } else {
+        contentText = String(candidate || '')
+      }
+      if (!steps && Array.isArray(data.steps)) steps = data.steps
+      if (!reasoningSummary && typeof data.reasoning_summary === 'string') reasoningSummary = data.reasoning_summary
+
+      const inserted = deliverMessage(chatKey, { role: 'assistant', content: contentText || '(无返回文本)' })
+      if (inserted) {
+        try {
+          const last = messages.value[messages.value.length - 1] as any
+          if (last && last.role === 'assistant') {
+            last.preview = {
+              result: contentText || undefined,
+              targets: mergedTargets.length ? mergedTargets : (Array.isArray(data?.preview?.targets) ? data.preview.targets : undefined),
+            }
+            last.steps = steps
+            last.reasoningSummary = reasoningSummary
+            last.stepDetails = Array.isArray(data.step_details) ? data.step_details : undefined
+            if (selSnapshot?.text) last.selectionText = selSnapshot.text
+          }
+        } catch {}
+      }
+
+      try {
+        const rid = data?.meta?.response_id
+        if (rid) setPreviousResponseId(docId, String(rid))
+      } catch {}
+    } else {
+      const msg = (data && (data.error?.message || JSON.stringify(data))) || '未知错误'
+      deliverMessage(chatKey, { role: 'assistant', content: `出错: ${msg}` })
+    }
+  } catch (e: any) {
+    deliverMessage(chatKey, { role: 'assistant', content: `网络错误: ${e?.message || e}` })
+  } finally {
+    isThinking.value = false
+  }
 }
 
 function filePreviewUrl(fileId: string) { return `${filesBase}/api/files/content/${fileId}` }
@@ -349,7 +520,9 @@ try {
     try {
       const items = (e?.detail && (e.detail as any).messages) || []
       if (Array.isArray(items)) {
-        for (const m of items) pushMessage({ role: 'assistant', content: String(m || '') })
+        for (const m of items) {
+          deliverMessage(currentChatKey.value, { role: 'assistant', content: String(m || '') }, { persist: false })
+        }
       }
     } catch {}
   }

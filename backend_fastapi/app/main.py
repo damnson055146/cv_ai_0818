@@ -632,10 +632,10 @@ async def _create_inner(body: dict, doc_type: str) -> JSONResponse:
 
     # Bound max tokens
     try:
-        max_tokens = int(body.get("max_output_tokens") or 8192)
-        max_tokens = max(512, min(max_tokens, 16384))
+        max_tokens = int(body.get("max_output_tokens") or 32768)
+        max_tokens = max(512, min(max_tokens, 32768))
     except Exception:
-        max_tokens = 8192
+        max_tokens = 32768
     effort = str(body.get("reasoning_effort") or "medium").lower()
     if effort not in {"low", "medium", "high"}:
         effort = "medium"
@@ -985,10 +985,10 @@ async def _create_cv(body: dict) -> JSONResponse:
     use_agent = bool(agent_id)
 
     try:
-        max_tokens = int(body.get("max_output_tokens") or 8192)
-        max_tokens = max(512, min(max_tokens, 16384))
+        max_tokens = int(body.get("max_output_tokens") or 32768)
+        max_tokens = max(512, min(max_tokens, 32768))
     except Exception:
-        max_tokens = 8192
+        max_tokens = 32768
     effort = str(body.get("reasoning_effort") or "medium").lower()
     if effort not in {"low", "medium", "high"}:
         effort = "medium"

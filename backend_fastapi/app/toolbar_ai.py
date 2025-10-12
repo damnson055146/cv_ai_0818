@@ -1,4 +1,4 @@
-﻿from typing import Optional
+from typing import Any, Iterable, Optional
 
 import os
 
@@ -19,6 +19,54 @@ SYSTEM_PROMPT = (
     "You are an expert writing assistant focussed on subtle human rewrites. "
     "Avoid AI buzzwords, vary sentence lengths, and keep the author voice authentic."
 )
+
+
+def _collect_text(node: Any) -> str:
+    if isinstance(node, str):
+        return node
+    if isinstance(node, dict):
+        if "text" in node:
+            return _collect_text(node["text"])
+        if "content" in node:
+            return _collect_text(node["content"])
+        if "value" in node:
+            return _collect_text(node["value"])
+        return ""
+    if isinstance(node, Iterable):
+        parts = []
+        for item in node:
+            part = _collect_text(item)
+            if part:
+                parts.append(part)
+        return "".join(parts)
+    return ""
+
+
+def _extract_output_text(payload: dict) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    text = payload.get("output_text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    collected = []
+    output = payload.get("output")
+    if isinstance(output, list):
+        for item in output:
+            part = _collect_text(item)
+            if part:
+                collected.append(part)
+
+    if collected:
+        joined = "\n".join(part.strip() for part in collected if part.strip())
+        if joined:
+            return joined
+
+    reply = payload.get("reply")
+    if isinstance(reply, str) and reply.strip():
+        return reply.strip()
+
+    return ""
 
 
 async def _call_openai(prompt: str, selection: str, *, max_tokens: int, effort: str) -> dict:
@@ -62,19 +110,7 @@ async def _call_openai(prompt: str, selection: str, *, max_tokens: int, effort: 
         raise HTTPException(status_code=resp.status_code, detail=err)
 
     data = resp.json()
-    output_text = data.get("output_text")
-    if not output_text:
-        output = data.get("output") or []
-        for item in output:
-            if item.get("type") == "message":
-                for chunk in item.get("content", []) or []:
-                    if isinstance(chunk, dict) and chunk.get("type") in ("output_text", "text"):
-                        output_text = chunk.get("text")
-                        break
-                if output_text:
-                    break
-        if not output_text and isinstance(data.get("reply"), str):
-            output_text = data["reply"]
+    output_text = _extract_output_text(data)
 
     return {"provider": "responses", "text": output_text or "", "raw": data}
 
@@ -114,4 +150,3 @@ async def rewrite(body: dict):
         "provider": result.get("provider"),
         "prompt": prompt,
     }
-
