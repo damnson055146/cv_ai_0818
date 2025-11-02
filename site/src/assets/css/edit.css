@@ -58,8 +58,8 @@
     display: none !important;
   }
 
-  .pane-container {
-    border: none;
+.pane-container {
+  border: none;
   }
 
   .vue-zoom {
@@ -78,4 +78,32 @@
     margin-top: 0 !important;
     border: none;
   }
+}
+
+.resume-format {
+  @apply font-inherit leading-inherit;
+}
+
+.resume-font-size-12 {
+  font-size: 12px !important;
+}
+
+.resume-font-size-14 {
+  font-size: 14px !important;
+}
+
+.resume-font-size-16 {
+  font-size: 16px !important;
+}
+
+.resume-font-size-18 {
+  font-size: 18px !important;
+}
+
+.resume-font-size-20 {
+  font-size: 20px !important;
+}
+
+.resume-font-size-24 {
+  font-size: 24px !important;
 }

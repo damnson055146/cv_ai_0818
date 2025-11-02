@@ -1,212 +1,82 @@
-<h1 align="center">Markdown Resume</h1>
+# CV AI
 
-<p align="center">Write an ATS-friendly Resume in Markdown. Available for anyone, Optimized for Dev.</p>
+## 项目概览
+- Nuxt 3 (Vite + UnoCSS + Pinia) 构建的在线 Markdown 简历编辑器，内置聊天、AI 工具与多语言支持。
+- FastAPI 服务封装 OpenAI Agents/Responses API，用于文档生成、翻译、文件上传等能力。
+- packages/ 目录提供共享 TypeScript 工具库（tsup 构建），减少前端与脚本的重复实现。
+- SQLite 数据库 `backend_fastapi/conversations.db` 存放提示词、PS 配置和聊天缓存，应用启动时自动建表。
 
-<p align="center"><a href="/"><strong>Start Writing Now</strong></a>!</p>
+## 主要目录
+- `site/` Nuxt 前端源码（组件、Pinia store、server/api 中间层、i18n 配置）。
+- `backend_fastapi/` FastAPI 服务，入口 `app/main.py`，业务路由在 `agent.py` 与 `toolbar_ai.py`。
+- `packages/` Markdown、字体、格式化等工具包，运行 `pnpm build:pkg` 编译。
+- `logs/` 默认存放 `rec_create.log` 等后端生成的调试日志。
 
-<img align="center" src="https://raw.githubusercontent.com/junian/markdown-resume/assets/img/markdown-resume-screenshot-00.jpg"/>
+## 快速开始
+- `pnpm install && pnpm build:pkg` 安装依赖并构建共享包。
+- `pnpm dev --filter site` 启动 Nuxt 开发服务器（默认端口 3000）。
+- `pip install -r backend_fastapi/requirements.txt` 安装 FastAPI 所需依赖。
+- `uvicorn backend_fastapi.app.main:app --host 0.0.0.0 --port 8000` 启动后端接口。
+- 在 `site/.env` 中设置 `FASTAPI_BASE_URL=http://127.0.0.1:8000`，前端会将 `/api/*` 调用转发至后端。
 
-## About
-A work from Junian, with LLM integrated.
+## 环境变量速览
+- 后端：`OPENAI_API_KEY`（必填）、`FASTAPI_CORS_ALLOW_ORIGINS`（逗号分隔来源，默认允许本地 3000）、`DEFAULT_FASTAPI_MODEL`、`CV_AGENT_ID` / `PS_AGENT_ID` / `REC_AGENT_ID`（可选 Agents 模式）。
+- 后端可选：`REC_PROMPT_ID` / `REC_PROMPT_VERSION`、`CV_PROMPT_ID` / `CV_PROMPT_VERSION`、`CREATE_TIMEOUT` 控制调用 OpenAI Responses 的模型与超时。
+- 前端：`FASTAPI_BASE_URL`（指向 FastAPI 服务）、`USE_AGENTS`、`MCP_QUEUE_TOKEN`（保护 `/api/editor-state` 与 `/api/editor-commands`），`NUXT_APP_BASE_URL` 用于部署场景。
+- 前端可选：`NUXT_PUBLIC_GOOGLE_FONTS_KEY`、`SILICON_FLOW_API_KEY` / `SILICON_FLOW_BASE_URL` / `SILICON_FLOW_MODEL`、`PS_PROMPTS_BASE_DIR` 及文件名覆盖本地 PS 模板。
 
-Changes I made from the original work:
-- Default template is now as close as possible with [CareerCup's](https://www.careercup.com/resume) resume template.
-- Default color is all Black.
-- Added Web-safe fonts for easier ATS parsing.
-- And many more ...
+## 后端 API（FastAPI）
+| Method | Path | 功能 | 请求 | 响应 | 实现 |
+| --- | --- | --- | --- | --- | --- |
+| POST | /api/agent/act | 编辑代理生成步骤、目标与候选结果 | `{"clientId":string,"instruction":string,"docId"?:string,"selection"?:object,"file_ids"?:string[],"inline_text_snippets"?:string[],"session_id"?:string,"previous_response_id"?:string,"doc_type"?:string}` | 成功 `{"ok":true,"preview":{"result":string,"targets"?:any[]},"steps"?:string[],"reasoning_summary"?:string,"step_details"?:any[],"raw_text"?:string,"meta":{"response_id"?:string,"session_id"?:string}}`；失败 `{"ok":false,"error":...}` | `backend_fastapi/app/agent.py:81` |
+| POST | /api/create | 通用文档生成（doc_type=rec/ps） | `{"doc_type":"rec"|"ps","prompt"?:string,"language"?:string,"file_ids"?:string[],"max_output_tokens"?:number,"reasoning_effort"?:string}` | `{"status":"ok","raw":any,"output_text":string,"others":{"material"?:string,"outline"?:string,"checks"?:object,"result"?:object,"reasoning_summary"?:string,"steps"?:list}}` | `backend_fastapi/app/main.py:1158` |
+| POST | /api/rec/create | 推荐信生成旧路径（委托 /api/create） | 同上但 `doc_type` 固定 `rec` | 同上 | `backend_fastapi/app/main.py:1145` |
+| POST | /api/cv/create | 简历 Markdown 生成 | `{"prompt":string,"language"?:string,"file_ids"?:string[],"max_output_tokens"?:number,"reasoning_effort"?:string}` | 成功 `{"result":string}`（Markdown），失败返回 HTTP 错误 | `backend_fastapi/app/main.py:1152` |
+| POST | /api/translate | 中文/英文互译 | `{"text":string,"target"?:("zh"|"en")}` | `{"ok":true,"text":string}`（失败返回 HTTP 4xx） | `backend_fastapi/app/main.py:1170` |
+| POST | /api/files/upload | 将 Base64 文件上传到 OpenAI Files | `{"name":string,"contentBase64":string,"contentType"?:string,"purpose"?:string}` | `{"status":"ok","file":{...OpenAI file...}}` | `backend_fastapi/app/main.py:205` |
+| GET | /api/files/meta/{file_id} | 查询 OpenAI 文件元信息 | 路径参数 `file_id` | 透传 OpenAI JSON；错误抛 HTTPException | `backend_fastapi/app/main.py:218` |
+| GET | /api/files/content/{file_id} | 下载 OpenAI 文件内容 | 路径参数 `file_id` | 以流形式返回二进制内容 | `backend_fastapi/app/main.py:235` |
+| GET | /api/prompts | 列出已保存的提示词 key | 查询参数 `prefix`、`exclude`（可选） | `{"ok":true,"items":[{"key":string,"updated_at":string},...]}` | `backend_fastapi/app/agent.py:546` |
+| GET | /api/prompts/{key} | 读取指定提示词 | 路径参数 `key` | `{"ok":true,"key":string,"value":string|null}` | `backend_fastapi/app/agent.py:527` |
+| POST | /api/prompts/{key} | 写入提示词内容 | `{"value":string}`，需 `x-admin-token`（若配置 `PROMPTS_ADMIN_TOKEN`） | `{"ok":true}` | `backend_fastapi/app/agent.py:534` |
+| POST | /api/prompts/seed-ps-system | 批量导入 PS 系统提示词 | `{"element_file"?:string,"outline_file"?:string,"body_file"?:string,"element_text"?:string,"outline_text"?:string,"body_text"?:string}` | `{"ok":true,"saved":number}`（至少保存 1 项，否则 400） | `backend_fastapi/app/agent.py:555` |
+| GET | /api/toolbar/presets | 获取 AI 工具栏默认提示词 | 无请求体 | `{"presets":[{"name":string,"prompt":string}]}` | `backend_fastapi/app/toolbar_ai.py:118` |
+| POST | /api/toolbar/rewrite | AI 工具栏改写选区 | `{"selection":string,"prompt"?:string,"max_tokens"?:number,"reasoning_effort"?:string}` | `{"status":"ok","text":string,"raw":any,"provider":string,"prompt":string}` | `backend_fastapi/app/toolbar_ai.py:127` |
 
-## Notice
+说明：表中 `selection` 结构与 Nuxt `/api/editor-state` 返回一致，包括 `hasSelection`、`text`、`start`、`end` 等字段。所有 FastAPI 接口在错误时会抛出 `HTTPException`，前端收到的 JSON 位于 `{"detail":...}` 中。
 
-Highly recommend using Chromium-based browsers, e.g., [Chrome](https://www.google.com/chrome/) and [Microsoft Edge](https://www.microsoft.com/en-us/edge).
+## Nuxt Server API（前端中间层）
+| Method | Path | 功能 | 请求 | 响应 | 实现 |
+| --- | --- | --- | --- | --- | --- |
+| GET | /api/editor-state | 返回编辑器缓存的选区和文档内容 | 查询参数 `clientId`，可选 Header `x-mcp-token` | `{"ok":true,"selection":{...},"doc":string,"updatedAt":number}` | `site/src/server/api/editor-state.get.ts:23` |
+| POST | /api/editor-state | 更新缓存的选区与文档 | `{"clientId":string,"selection":{...},"doc"?:string}`，可选 Header `x-mcp-token` | `{"ok":true}` | `site/src/server/api/editor-state.post.ts:25` |
+| GET | /api/editor-commands | 拉取待执行的编辑命令 | 查询 `clientId`，可选 Header `x-mcp-token` | `{"ok":true,"commands":array}`，读取后自动清空队列 | `site/src/server/api/editor-commands.get.ts:23` |
+| POST | /api/editor-commands | 入队编辑命令 | `{"clientId":string,"command":{ type:"replace"|"smart_edit"|"select", ... }}` | `{"ok":true,"queued":number}` | `site/src/server/api/editor-commands.post.ts:32` |
+| POST | /api/mcp | JSON-RPC 适配 MCP 工具（封装 editor-state/commands） | JSON-RPC 2.0 请求，支持 `tools/list`、`tools/call` | JSON-RPC 响应或错误对象，尊重 `x-mcp-token` | `site/src/server/api/mcp.post.ts:19` |
+| POST | /api/ps/seed-from-upload | 依据上传文本生成 PS 素材/大纲/正文草案 | `{"chatId"?:string,"language"?:string,"uploadText"?:string,"projectInfo"?:string,"studentInfo"?:string}` | `{"status":"ok","data":{"elements":string,"outline":string,"body":string}}` 或错误 | `site/src/server/api/ps/seed-from-upload.post.ts:8` |
+| GET | /api/prompts/ps-defaults | 读取 PS 默认模板（优先后端，再落地文件） | 无请求体 | `{"status":"ok","data":{"ps_requirement":string,"guidance_outline":string,"guidance_element":string}}` | `site/src/server/api/prompts/ps-defaults.get.ts:5` |
+| POST | /api/prompts/ps-defaults | 保存 PS 模板（优先写后端，再写文件） | `{"ps_requirement"?:string,"guidance_outline"?:string,"guidance_element"?:string}` | `{"status":"ok"}` 或报错 | `site/src/server/api/prompts/ps-defaults.post.ts:5` |
+| POST | /api/siliconflow | 代理调用硅基流动 Chat Completions | 与 OpenAI 兼容的 `{"model":string,"messages":[...],"temperature"?:number,...}` | 透传硅基流动响应或 `{"error":...}` | `site/src/server/api/siliconflow.post.ts:11` |
+| POST | /api/html-to-docx | 将 HTML 转换为 DOCX Base64 | `{"html":string,"options"?:object}` | `{"ok":true,"base64":string}` | `site/src/server/api/html-to-docx.post.ts:1` |
+| POST | /api/intent-parse | 本地意图解析占位实现 | `{"template"?:string,"context"?:any}` | `{"status":"ok","intent":{...}}` 或 `{"status":"error","error":string}` | `site/src/server/api/intent-parse.post.ts:1` |
+| GET | /api/health | 健康检查 | 无请求体 | `{"ok":true,"time":number}` | `site/src/server/api/health.get.ts:1` |
+| GET | /api/ping | 简单连通性检测 | 无请求体 | `{"ok":true,"msg":"pong from src/server/api"}` | `site/src/server/api/ping.get.ts:1` |
 
-## Features
+这些 Nuxt API 会根据 `FASTAPI_BASE_URL` 决定是否转发到后端；当 `MCP_QUEUE_TOKEN` 存在时需携带 `x-mcp-token` Header。
 
-- Write your resume in Markdown and preview it in real-time, it's smooth!
-- It works offline ([PWA](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps))
-- Export to A4 and US Letter size PDFs
-- Customize page margins, theme colors, line heights, fonts, etc.
-- Pick any fonts from [Google Fonts](https://fonts.google.com/)
-- Add icons easily via [Iconify](https://github.com/iconify/iconify) (search for icons on [Icônes](https://icones.js.org/))
-- Tex support ([KaTeX](https://github.com/KaTeX/KaTeX))
-- Cross-reference (would be useful for an academic CV)
-- Case correction (e.g. `Github` -> `GitHub`)
-- Add line breaks (`\\[10px]`) or start a new page (`\newpage`) just like in LaTeX
-- Break pages automatically
-- Customize CSS
-- Manage multiple resumes
-- Your data in your hands:
-  - Data are saved locally within your browser, see [here](https://localforage.github.io/localForage/) for details
-  - Open-source static website hosted on [Github Pages](https://pages.github.com/), which doesn't (have the ability to) collect your data
-  - No user tracking, no ads
-- Dark mode
+## 前后端协同要点
+- `site/src/components/shared/Chatbot.vue` 通过 `/api/agent/act` 与 FastAPI 交互，使用 `/api/files/*` 上传/预览附件，并将编辑器选区缓存到 `/api/editor-state`。
+- `site/src/components/edit/toolbar/AiToolbar.vue` 调用 `/api/toolbar/presets` 与 `/api/toolbar/rewrite` 提供选区改写，同时在本地存储自定义预设。
+- FastAPI 在生成文档时会根据 `doc_type` 读取数据库或根目录下的 `cv_sys.md`、`ps_sys.md`、`rec_gen.md`，并将请求/响应记录到 `logs/rec_create.log`。
+- Nuxt server API 提供 `editor-commands` 队列，便于后端或 MCP 工具回写编辑器；命令消费后即被清空。
 
-## Development
+## 数据与日志
+- 提示词、PS 设置、聊天记忆均保存在 `backend_fastapi/conversations.db`，通过 `app/db.py` 自动迁移。
+- 文件上传直接落在 OpenAI Files，响应中返回的 `file.id` 用于后续 `/api/files/meta|content` 调用。
+- 后端日志默认写入 `logs/rec_create.log`，可通过 `REC_CREATE_LOG_PATH` 自定义位置。
 
-It's built on [Nuxt 3](https://nuxt.com), with the power of [Vue 3](https://github.com/vuejs/vue-next), [Vite](https://github.com/vitejs/vite), [Zag](https://zagjs.com/), and [UnoCSS](https://github.com/antfu/unocss).
-
-Clone the repo and install dependencies:
-
-```bash
-pnpm install
-```
-
-Build some [packages](packages):
-
-```bash
-pnpm build:pkg
-```
-
-To enable picking fonts from [Google Fonts](https://fonts.google.com/), you will need to generate a [Google Fonts Developer API Key](https://developers.google.com/fonts/docs/developer_api#APIKey). Then, create a `.env` file in [`site`](site/) folder and put:
-
-```
-NUXT_PUBLIC_GOOGLE_FONTS_KEY="YOUR_API_KEY"
-```
-
-Start developing / building the site:
-
-```bash
-pnpm dev
-pnpm build
-```
-
-## Credits
-
-- The original work: [Renovamen/oh-my-cv](https://github.com/Renovamen/oh-my-cv)
-- [billryan/resume](https://github.com/billryan/resume)
-
-## License
-
-This project is licensed under [MIT](LICENSE) license.
-
----
-
-Made with ☕ by Junian.
-Appreciate the effort from Junian --Pan
-
-# CV AI Project
-
-## FastAPI + OpenAI Agents SDK Migration
-
-This project has migrated AI endpoints from Node (Nuxt server routes) to a FastAPI backend using OpenAI Agents SDK Sessions.
-
-### Setup
-
-1) Backend (FastAPI)
-- Install deps:
-  - `pip install -r backend_fastapi/requirements.txt`
-- Set env:
-  - `OPENAI_API_KEY=...`
-  - optional: `AGENTS_FALLBACK_TO_PROXY=true`
-  - optional: `CV_AGENT_ID` / `PS_AGENT_ID` / `REC_AGENT_ID` if you want `/api/create` to use prebuilt OpenAI Agents
-  - optional: `REC_PROMPT_ID` / `REC_PROMPT_VERSION` to keep the recommendation flow mounted to a specific Prompt resource
-- Run:
-  - `uvicorn backend_fastapi.app.main:app --host 0.0.0.0 --port 8000`
-
-2) Frontend (Nuxt)
-- Set `.env`:
-  - `FASTAPI_BASE_URL=http://127.0.0.1:8000`
-  - `USE_AGENTS=true`
-- Start:
-  - `pnpm dev` in `site/`
-
-### Endpoints
-- FastAPI now serves: `/api/ai`, `/api/files/upload`, `/api/content-generate`, `/api/convert-to-md`, `/api/agent/act`.
-- Frontend calls are unified to point at `FASTAPI_BASE_URL` when provided.
-
-Agent endpoint notes:
-- `POST /api/agent/act`: plans edits for the current document/selection.
-  - Body: `{ clientId, docId, instruction, file_ids?, inline_text_snippets?, session_id? }`
-  - Reads current editor state from Nuxt: `GET ${NUXT_BASE_URL}/api/editor-state?clientId=...` (sends `x-mcp-token` if `MCP_QUEUE_TOKEN` is set).
-  - Uses OpenAI Responses API (`gpt-5`, reasoning medium) and returns JSON with `steps`, `targets`, `result`, `reasoning_summary`.
-
-### Chatbot Settings UI
-- Manage prompts at `site` route: `/admin/chatbot-settings`.
-  - Per-type system prompts: keys `agent_act_system_prompt:{cv|ps|rec}`.
-  - Per-type append prompts: keys `agent_act_global_append:{cv|ps|rec}`.
-  - Global fallbacks: `agent_act_system_prompt`, `agent_act_global_append`.
-  - Concatenation order per type: `agent_act_concat_order:{cv|ps|rec}` with JSON array of `"system"|"append"|"session"`.
-  - Session prompt by id: `agent_act_session_prompt:{session_id}`.
-- If backend sets `PROMPTS_ADMIN_TOKEN`, fill the Admin Token field so POST updates include `x-admin-token`.
-
-### Removed Node endpoints
-The following Nuxt server routes have been removed in favor of FastAPI:
-- `site/src/server/api/ai.post.ts`
-- `site/src/server/api/content-generate.post.ts`
-- `site/src/server/api/convert-to-md.post.ts`
-
-### Sessions
-Requests include `use_agents: true` and a `session_id` (document scoped) to enable Agents SDK Sessions memory, per the official docs.
-
-## Chatbot Integration
-
-- Component: `site/src/components/shared/Chatbot.vue`
-- API: Uses FastAPI `POST /api/agent/act` (agent endpoint; backend defaults to `gpt-5`).
-- Editor state awareness: Chatbot includes `clientId` in the request body. The backend agent augments the model input by fetching the current editor selection/document from Nuxt `GET /api/editor-state?clientId=...`.
-  - The editor periodically syncs selection/doc to Nuxt via `POST /api/editor-state` (see `site/src/components/edit/Editor.vue`).
-  - If `MCP_QUEUE_TOKEN` is set, Nuxt APIs require header `x-mcp-token` for these editor-state endpoints (handled in the editor code).
-- Conversation continuity: Chatbot passes a `session_id` (per-session) and, when available, a `previous_response_id` to `/api/agent/act` to improve follow-ups. Conversation is scoped by `docId` (the current resume id from `useDataStore().data.curResumeId`).
-- File attachments: Chatbot uploads files to `POST /api/files/upload` and passes returned `file_ids` to `/api/agent/act`. Previews stream from `GET /api/files/content/{file_id}`.
-- Visibility: The floating bubble is hidden on the homepage by default. Control via `runtimeConfig.public.chatbot.bubbleHiddenRoutes` in `site/nuxt.config.ts`.
-- Base URL behavior: If `FASTAPI_BASE_URL` is set in `site/.env`, Chatbot hits that backend; otherwise it uses same-origin relative `/api/*` (suitable behind a reverse proxy).
-
-## Prompt Management (Unified)
-
-All system/user prompts are managed via a single SQLite table `prompts` (file: `backend_fastapi/conversations.db`). You can edit them from the UI or via REST.
-
-- Backend CRUD APIs
-  - List: `GET /api/prompts?prefix=<prefix>&exclude=<prefix_csv>`
-  - Read: `GET /api/prompts/{key}`
-  - Write: `POST /api/prompts/{key}` body: `{ value: string }` (protect with `PROMPTS_ADMIN_TOKEN` + `x-admin-token` if needed)
-
-- Chatbot (ACT) keys and stitching
-  - Final system prompt = join non-empty with blank lines:
-    1) Base (by doc type): `agent_act_system_prompt:{cv|ps|rec}` → fallback `agent_act_system_prompt` → ENV file → repo root `{cv|ps|rec}_sys.md` → built-in
-    2) Global append (optional): `agent_act_global_append:{cv|ps|rec}` → fallback `agent_act_global_append` → ENV file → empty
-    3) Session-level (optional): `agent_act_session_prompt:{session_id}`
-  - Doc type selection:
-    - Frontend sends `doc_type` (from store/local metadata when available), else backend auto-detects from instruction/document.
-  - UI entries:
-    - Chatbot header: Gear = “Manage Chatbot Prompts” (edits `agent_*` keys)
-    - Chatbot header: Notebook = “Session Prompt” (edits `agent_act_session_prompt:{session_id}`)
-
-- PS (Personal Statement) prompts
-  - System prompts for the 3 stages (DB-first, then fallback to built-ins):
-    - `ps_system_element`, `ps_system_outline`, `ps_system_body`
-  - Defaults content (non-system text templates) are still served by `GET /api/prompts/ps-defaults` but now prefer DB keys for:
-    - `ps_requirement`, `guidance_outline`, `guidance_element`
-  - Save via `POST /api/prompts/ps-defaults` (will write to DB when backend is configured, else fallback to filesystem)
-
-- Toolbar prompts
-  - System: `toolbar_system_prompt`
-  - Default user prompt: `toolbar_default_prompt`
-  - Both are DB-first with built-in fallbacks.
-
-- Seeding / initialization
-  - Script: `python backend_fastapi/scripts/seed_prompts.py`
-    - Seeds:
-      - `agent_act_system_prompt`, `agent_act_global_append`
-      - `agent_act_system_prompt:{cv|ps|rec}` from root `cv_sys.md|ps_sys.md|rec_sys.md` if present
-      - `ps_system_element|ps_system_outline|ps_system_body` (English defaults)
-      - `toolbar_default_prompt|toolbar_system_prompt`
-
-- Database (PS tables)
-  - Created on backend start:
-    - `ps_documents` (per-document, initially empty): `doc_id`, `info_program`, `info_ps_requirement`, `info_student_profile`, timestamps
-    - `ps_settings` (global, initially empty): `key`, `value`, `updated_at` (can store `guidance_element`, `guidance_outline` if you prefer separate from `prompts`)
-
-- PS system from files (one-off)
-  - To overwrite PS three-stage system prompts from your own copy files in one go:
-    - Option A (script):
-      - `python backend_fastapi/scripts/seed_ps_system_from_files.py --element <path/to/element.md> --outline <path/to/outline.md> --body <path/to/body.md>`
-      - Or set env `PS_SYSTEM_ELEMENT_FILE`, `PS_SYSTEM_OUTLINE_FILE`, `PS_SYSTEM_BODY_FILE` and run the script without args.
-    - Option B (API):
-      - `POST {FASTAPI}/api/prompts/seed-ps-system` with JSON body, any of:
-        - `{ "element_file": "C:/.../element.md", "outline_file": ".../outline.md", "body_file": ".../body.md" }`
-        - or raw text: `{ "element_text": "...", "outline_text": "...", "body_text": "..." }`
-      - Protected by `PROMPTS_ADMIN_TOKEN` when set; include header `x-admin-token` to authorize.
-
-- ENV overrides for file-based fallbacks (optional)
-  - ACT base: `AGENT_ACT_PROMPT_FILE_{CV|PS|REC}` → `AGENT_ACT_PROMPT_FILE`
-  - ACT append: `AGENT_ACT_APPEND_FILE_{CV|PS|REC}` → `AGENT_ACT_APPEND_FILE`
-
-Tip: Prefer editing from the UI “管理提示词” dialogs. For Chatbot-specific keys, use the Chatbot’s gear button; for all other keys (PS/Toolbar/REC), use the “管理提示词” buttons on the home and document pages (left of Save/Save As).
+## 开发调试建议
+- `pnpm lint`（根目录）确保前端代码通过 ESLint/Prettier。
+- `pnpm typecheck --filter site` 可在提交前跑一次 Nuxt TypeScript 检查。
+- 使用 `curl` 或 `httpie` 对 FastAPI 端点（如 `/api/create`、`/api/agent/act`）做手动回归，以确认 OpenAI Key、Prompt ID 等配置正确。
+- 若新增命令或接口，更新 `README.md` 与相关脚本（如 `backend_fastapi/scripts/seed_prompts.py`）保持文档一致。

@@ -27,6 +27,7 @@
 </template>
 
 <script lang="ts" setup>
+import { useEventBus } from "@vueuse/core";
 import type { ResumeListItem } from "~/types";
 
 // Load resumes from storage
@@ -36,5 +37,17 @@ const loadResumes = async () => {
   list.value = await getResumeList();
 };
 
-onMounted(loadResumes);
+const resumeCreatedBus = useEventBus("resumes:created");
+let stopListening: (() => void) | undefined;
+
+onMounted(async () => {
+  await loadResumes();
+  stopListening = resumeCreatedBus.on(() => {
+    loadResumes();
+  });
+});
+
+onBeforeUnmount(() => {
+  if (typeof stopListening === "function") stopListening();
+});
 </script>

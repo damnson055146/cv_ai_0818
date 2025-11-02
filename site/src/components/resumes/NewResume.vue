@@ -48,8 +48,34 @@
                 <span>上传素材（{{ cvCfg.requireUpload ? '必需' : '可选' }}）</span>
                 <span class="text-xs text-light-c opacity-70">支持 PDF / MD / TXT / DOC / DOCX</span>
               </div>
-              <input type="file" :accept="acceptedCvTypes" @change="onCvSelect" />
-              <div v-if="cvName" class="text-xs text-light-c">已选择：{{ cvName }}</div>
+              <div class="flex items-center justify-between text-xs text-light-c/80">
+                <label class="flex items-center gap-2">
+                  <input v-model="cvBatchMode" type="checkbox" class="accent-brand" />
+                  <span>批量模式</span>
+                </label>
+                <span class="text-[11px] text-light-c/60">每个文件将独立排队，最多并发 5 个任务</span>
+              </div>
+              <div v-if="cvBatchMode" class="space-y-2">
+                <input type="file" :accept="acceptedCvTypes" multiple @change="onCvBatchSelect" />
+                <div v-if="cvBatchFiles.length" class="space-y-1">
+                  <div
+                    v-for="(file, index) in cvBatchFiles"
+                    :key="`${file.name}-${index}`"
+                    class="flex items-center justify-between rounded border border-darker-c/60 bg-dark-c/60 px-3 py-1.5 text-xs text-light-c"
+                  >
+                    <span class="truncate pr-2">{{ file.name }}</span>
+                    <div class="flex items-center gap-2">
+                      <span v-if="file.size" class="text-light-c/60">{{ formatBytes(file.size) }}</span>
+                      <button class="text-red-400 hover:text-red-300 transition text-[11px]" @click="removeCvBatchFile(index)">移除</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="text-[11px] text-light-c/60">将共享下方填写的提示信息。</div>
+              </div>
+              <div v-else class="space-y-2">
+                <input type="file" :accept="acceptedCvTypes" @change="onCvSelect" />
+                <div v-if="cvName" class="text-xs text-light-c">已选择：{{ cvName }}</div>
+              </div>
             </div>
             <div class="space-y-1 cv-upload-block">
               <label class="text-xs text-light-c">输入信息（可选）</label>
@@ -60,11 +86,37 @@
                 placeholder="例如：个人背景、教育经历亮点、关键项目、技能要点等"
               />
             </div>
+            <div v-if="cvQueueList.length" class="rounded-lg border border-c bg-dark-c/70 p-4 space-y-2">
+              <div class="flex items-center justify-between text-sm font-medium text-light-c">
+                <span>生成队列</span>
+                <span class="text-xs text-light-c/60">最多 5 个任务并行</span>
+              </div>
+              <div
+                v-for="task in cvQueueList"
+                :key="task.id"
+                class="rounded border border-darker-c/60 bg-dark-c/60 px-3 py-2 space-y-1 text-light-c"
+              >
+                <div class="flex items-center justify-between text-xs font-medium">
+                  <span class="truncate pr-2">{{ task.title }}</span>
+                  <span :class="['text-xs font-semibold', queueStatusClass(task.status)]">{{ formatQueueStatus(task.status) }}</span>
+                </div>
+                <div class="flex items-center justify-between text-xs text-light-c/70">
+                  <span class="truncate pr-3">{{ task.progress }}</span>
+                  <button
+                    v-if="task.status === 'success' && task.docIds.length"
+                    class="text-[11px] text-brand hover:text-brand/80 transition"
+                    @click="openTaskDoc(task)"
+                  >打开</button>
+                </div>
+                <div v-if="task.status === 'error' && task.error" class="text-[11px] text-rose-400">{{ task.error }}</div>
+                <div class="text-[10px] text-light-c/50">{{ formatTaskTime(task) }}</div>
+              </div>
+            </div>
             <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-c">
               <button
                 type="button"
                 class="text-xs text-light-c opacity-80 hover:text-brand transition"
-                :disabled="cvSubmitting"
+                :disabled="cvSubmitting || cvBatchMode"
                 @click="createTemplateCv"
               >直接使用默认模板</button>
               <div class="ml-auto flex gap-2">
@@ -105,27 +157,53 @@
                 <span>上传素材（可选）</span>
                 <span class="text-xs text-light-c opacity-70">支持 PDF / MD / TXT / DOC / DOCX</span>
               </div>
-              <input ref="uploadInputRef" type="file" class="hidden" :accept="acceptedTypes" @change="onUploadSelect" />
-              <div class="flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-2 rounded border border-dashed border-c px-3 py-2 text-sm text-light-c hover:border-brand hover:text-brand transition"
-                  @click="openUploadPicker"
-                >
-                  <span i-mdi:tray-arrow-up />
-                  <span>选择文件</span>
-                </button>
-                <button
-                  v-if="uploadFile"
-                  type="button"
-                  class="text-xs text-light-c opacity-80 hover:text-red-400 transition"
-                  @click="clearUpload"
-                >移除</button>
+              <div class="flex items-center justify-between text-xs text-light-c/80">
+                <label class="flex items-center gap-2">
+                  <input v-model="psBatchMode" type="checkbox" class="accent-brand" />
+                  <span>批量模式</span>
+                </label>
+                <span class="text-[11px] text-light-c/60">一次可添加多个文件，最多并发 5 个任务</span>
               </div>
-              <div v-if="uploadFile" class="flex items-center gap-2 rounded bg-darker-c px-3 py-2 text-xs text-light-c">
-                <span i-mdi:file-document-outline />
-                <span class="truncate">{{ uploadFile.name }}</span>
-                <span v-if="uploadFileSummary" class="opacity-70">· {{ uploadFileSummary }}</span>
+              <input v-if="!psBatchMode" ref="uploadInputRef" type="file" class="hidden" :accept="acceptedTypes" @change="onUploadSelect" />
+              <div v-if="psBatchMode" class="space-y-2">
+                <input type="file" :accept="acceptedTypes" multiple @change="onPsBatchSelect" />
+                <div v-if="psBatchFiles.length" class="space-y-1">
+                  <div
+                    v-for="(file, index) in psBatchFiles"
+                    :key="`${file.name}-${index}`"
+                    class="flex items-center justify-between rounded border border-darker-c/60 bg-dark-c/60 px-3 py-1.5 text-xs text-light-c"
+                  >
+                    <span class="truncate pr-2">{{ file.name }}</span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-light-c/60">{{ formatBytes(file.size) }}</span>
+                      <button class="text-red-400 hover:text-red-300 transition text-[11px]" @click="removePsBatchFile(index)">移除</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="text-[11px] text-light-c/60">将共享下方填写的项目信息、学生亮点与备注。</div>
+              </div>
+              <div v-else class="space-y-2">
+                <div class="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-2 rounded border border-dashed border-c px-3 py-2 text-sm text-light-c hover:border-brand hover:text-brand transition"
+                    @click="openUploadPicker"
+                  >
+                    <span i-mdi:tray-arrow-up />
+                    <span>选择文件</span>
+                  </button>
+                  <button
+                    v-if="uploadFile"
+                    type="button"
+                    class="text-xs text-light-c opacity-80 hover:text-red-400 transition"
+                    @click="clearUpload"
+                  >移除</button>
+                </div>
+                <div v-if="uploadFile" class="flex items-center gap-2 rounded bg-darker-c px-3 py-2 text-xs text-light-c">
+                  <span i-mdi:file-document-outline />
+                  <span class="truncate">{{ uploadFile.name }}</span>
+                  <span v-if="uploadFileSummary" class="opacity-70">· {{ uploadFileSummary }}</span>
+                </div>
               </div>
               <div v-if="uploadParsing" class="text-xs text-brand animate-pulse">正在解析文件...</div>
             </div>
@@ -138,6 +216,33 @@
                 placeholder="粘贴初始素材、写作要求或其他背景信息（可选）"
               />
               <div class="text-xs text-light-c opacity-70">文字会与上传文件共同用于生成首稿，可单独使用。</div>
+            </div>
+
+            <div v-if="psQueueList.length" class="rounded-lg border border-c bg-dark-c/70 p-4 space-y-2">
+              <div class="flex items-center justify-between text-sm font-medium text-light-c">
+                <span>生成队列</span>
+                <span class="text-xs text-light-c/60">最多 5 个任务并行</span>
+              </div>
+              <div
+                v-for="task in psQueueList"
+                :key="task.id"
+                class="rounded border border-darker-c/60 bg-dark-c/60 px-3 py-2 space-y-1 text-light-c"
+              >
+                <div class="flex items-center justify-between text-xs font-medium">
+                  <span class="truncate pr-2">{{ task.title }}</span>
+                  <span :class="['text-xs font-semibold', queueStatusClass(task.status)]">{{ formatQueueStatus(task.status) }}</span>
+                </div>
+                <div class="flex items-center justify-between text-xs text-light-c/70">
+                  <span class="truncate pr-3">{{ task.progress }}</span>
+                  <button
+                    v-if="task.status === 'success' && task.docIds.length"
+                    class="text-[11px] text-brand hover:text-brand/80 transition"
+                    @click="openTaskDoc(task)"
+                  >打开</button>
+                </div>
+                <div v-if="task.status === 'error' && task.error" class="text-[11px] text-rose-400">{{ task.error }}</div>
+                <div class="text-[10px] text-light-c/50">{{ formatTaskTime(task) }}</div>
+              </div>
             </div>
 
             <div class="flex justify-end gap-2 border-t border-c pt-3">
@@ -159,8 +264,33 @@
             <div text-sm text-light-c>推荐信素材上传</div>
             <div class="space-y-1">
               <label class="text-xs text-light-c">上传文件（{{ recCfg.requireUpload ? '必需' : '可选' }}）</label>
-              <input type="file" :accept="acceptedRecTypes" @change="onRecSelect" />
-              <div v-if="recName" class="text-xs text-light-c">已选择：{{ recName }}</div>
+              <div class="flex items-center justify-between text-xs text-light-c/80">
+                <label class="flex items-center gap-2">
+                  <input v-model="recBatchMode" type="checkbox" class="accent-brand" />
+                  <span>批量模式</span>
+                </label>
+                <span class="text-[11px] text-light-c/60">支持多文件上传，最多并发 5 个任务</span>
+              </div>
+              <div v-if="recBatchMode" class="space-y-2">
+                <input type="file" :accept="acceptedRecTypes" multiple @change="onRecBatchSelect" />
+                <div v-if="recBatchFiles.length" class="space-y-1">
+                  <div
+                    v-for="(file, index) in recBatchFiles"
+                    :key="`${file.name}-${index}`"
+                    class="flex items-center justify-between rounded border border-darker-c/60 bg-dark-c/60 px-3 py-1.5 text-xs text-light-c"
+                  >
+                    <span class="truncate pr-2">{{ file.name }}</span>
+                    <div class="flex items-center gap-2">
+                      <span v-if="file.size" class="text-light-c/60">{{ formatBytes(file.size) }}</span>
+                      <button class="text-red-400 hover:text-red-300 transition text-[11px]" @click="removeRecBatchFile(index)">移除</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="space-y-1">
+                <input type="file" :accept="acceptedRecTypes" @change="onRecSelect" />
+                <div v-if="recName" class="text-xs text-light-c">已选择：{{ recName }}</div>
+              </div>
             </div>
             <div class="space-y-1 rec-upload-block">
               <label class="text-xs text-light-c">输入信息（可选）</label>
@@ -171,23 +301,35 @@
                 placeholder="例如：推荐人与学生关系、课程/项目背景、学生亮点、具体事例等"
               />
             </div>
+            <div v-if="recQueueList.length" class="rounded-lg border border-c bg-dark-c/70 p-4 space-y-2">
+              <div class="flex items-center justify-between text-sm font-medium text-light-c">
+                <span>生成队列</span>
+                <span class="text-xs text-light-c/60">最多 5 个任务并行</span>
+              </div>
+              <div
+                v-for="task in recQueueList"
+                :key="task.id"
+                class="rounded border border-darker-c/60 bg-dark-c/60 px-3 py-2 space-y-1 text-light-c"
+              >
+                <div class="flex items-center justify-between text-xs font-medium">
+                  <span class="truncate pr-2">{{ task.title }}</span>
+                  <span :class="['text-xs font-semibold', queueStatusClass(task.status)]">{{ formatQueueStatus(task.status) }}</span>
+                </div>
+                <div class="flex items-center justify-between text-xs text-light-c/70">
+                  <span class="truncate pr-3">{{ task.progress }}</span>
+                  <button
+                    v-if="task.status === 'success' && task.docIds.length"
+                    class="text-[11px] text-brand hover:text-brand/80 transition"
+                    @click="openTaskDoc(task)"
+                  >打开</button>
+                </div>
+                <div v-if="task.status === 'error' && task.error" class="text-[11px] text-rose-400">{{ task.error }}</div>
+                <div class="text-[10px] text-light-c/50">{{ formatTaskTime(task) }}</div>
+              </div>
+            </div>
             <div class="flex justify-end gap-2 pt-2 border-t border-c">
               <button class="px-3 py-1 rounded bg-gray-200 dark:bg-gray-600" @click="resetDialog">取消</button>
               <button class="px-3 py-1 rounded bg-blue-600 text-white hover:opacity-90" :disabled="!canConfirm || recSubmitting" @click="confirmCreateRec">确定</button>
-            </div>
-          </div>
-          
-          <!-- 全局加载遮罩：新建文档时调用 Agent 显示动画 -->
-          <div
-            v-if="psSubmitting || recSubmitting || cvSubmitting"
-            class="absolute inset-0 z-50 flex items-center justify-center rounded-md bg-black/30 backdrop-blur-sm"
-            aria-live="polite"
-          >
-            <div class="flex flex-col items-center gap-3 px-4 py-3 rounded-lg bg-white/90 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-slate-700/60 shadow-md">
-              <span class="w-6 h-6 border-2 border-brand border-t-transparent rounded-full animate-spin" aria-hidden="true" />
-              <div class="text-sm font-medium">
-                {{ agentStep || ($t('common.loading_ai') || '正在调用智能写作，请稍候…') }}
-              </div>
             </div>
           </div>
         </div>
@@ -198,7 +340,9 @@
 </template>
 
 <script lang="ts" setup>
+import { watch } from "vue";
 import { resolveBackendBase } from "~/utils/backendBase";
+import { useDocCreationQueue, type DocCreationTaskContext, type DocCreationResult, type TaskStatus, type QueueTask } from "~/composables/docCreationQueue";
 
 const runtimeConfig = useRuntimeConfig()
 const backendBase = computed(() => resolveBackendBase((runtimeConfig.public as any)?.backendBase))
@@ -257,6 +401,48 @@ import { createChatId, setDocMeta } from "~/utils/docContext";
 import { uploadSupportFile } from "~/utils/fileUpload";
 const toast = useToast();
 
+const queue = useDocCreationQueue()
+const queueTasks = queue.tasks
+const enqueueTask = queue.enqueue
+const defaultUserId = 1
+const psQueueTasks = computed(() => queueTasks.value.filter(task => task.type === 'ps' && task.userId === defaultUserId))
+const psQueueList = computed(() => [...psQueueTasks.value].sort((a, b) => b.createdAt - a.createdAt))
+const cvQueueList = computed(() => queueTasks.value
+  .filter(task => task.type === 'cv' && task.userId === defaultUserId)
+  .sort((a, b) => b.createdAt - a.createdAt))
+const recQueueList = computed(() => queueTasks.value
+  .filter(task => task.type === 'rec' && task.userId === defaultUserId)
+  .sort((a, b) => b.createdAt - a.createdAt))
+
+const formatQueueStatus = (status: TaskStatus) => {
+  if (status === 'queued') return '排队中'
+  if (status === 'running') return '生成中'
+  if (status === 'success') return '已完成'
+  return '失败'
+}
+
+const queueStatusClass = (status: TaskStatus) => {
+  if (status === 'success') return 'text-emerald-400'
+  if (status === 'error') return 'text-rose-400'
+  if (status === 'running') return 'text-blue-400'
+  return 'text-amber-300'
+}
+
+const formatTaskTime = (task: QueueTask) => {
+  try {
+    return new Date(task.createdAt).toLocaleTimeString()
+  } catch {
+    return ''
+  }
+}
+
+const openTaskDoc = (task: QueueTask) => {
+  if (!task.docIds || !task.docIds.length) return
+  const target = task.docIds[0]
+  if (!target) return
+  router.push(localePath(`/edit/${target}`))
+}
+
 type Doc = 'cv' | 'ps' | 'rec';
 type Lang = 'en' | 'zh';
 type UploadPayload = {
@@ -268,9 +454,43 @@ type UploadPayload = {
   text?: string
 }
 
+type SimpleFilePayload = {
+  name: string
+  base64: string
+  mime: string
+  size?: number
+}
+
+interface PsCreationOptions {
+  lang: Lang
+  projectInfo: string
+  studentInfo: string
+  manualText: string
+  uploadPayload: UploadPayload | null
+}
+
+interface CvCreationOptions {
+  lang: Lang
+  manualText: string
+  uploadPayload: SimpleFilePayload | null
+}
+
+interface RecCreationOptions {
+  lang: Lang
+  manualText: string
+  uploadPayload: SimpleFilePayload | null
+}
+
 const step = ref<'doc' | 'lang'>('doc');
 const curDoc = ref<Doc>('cv');
 const lang = ref<Lang | null>(null)
+
+const psBatchMode = ref(false)
+const cvBatchMode = ref(false)
+const recBatchMode = ref(false)
+const psBatchFiles = ref<UploadPayload[]>([])
+const cvBatchFiles = ref<SimpleFilePayload[]>([])
+const recBatchFiles = ref<SimpleFilePayload[]>([])
 
 const projectInfo = ref("")
 const studentInfo = ref("")
@@ -281,8 +501,6 @@ const uploadInputRef = ref<HTMLInputElement | null>(null)
 const uploadFile = ref<UploadPayload | null>(null)
 const uploadParsing = ref(false)
 const psSubmitting = ref(false)
-const agentStep = ref<string>("")
-const setAgentStep = (msg: string) => { agentStep.value = msg }
 const cvBase64 = ref<string | null>(null)
 const cvName = ref<string>("")
 const recBase64 = ref<string | null>(null)
@@ -391,6 +609,12 @@ const canConfirm = computed(() => {
   if (curDoc.value === 'ps') {
     if (!lang.value) return false
     if (uploadParsing.value) return false
+    if (psBatchMode.value) {
+      const hasBatchFiles = psBatchFiles.value.length > 0
+      if (!hasBatchFiles) return false
+      if (psCfg.value.requireUpload && !hasBatchFiles) return false
+      return true
+    }
     const hasFile = !!uploadFile.value
     const hasText = Boolean(initialText.value.trim())
     if (!hasFile && !hasText) return false
@@ -399,6 +623,12 @@ const canConfirm = computed(() => {
   }
   if (curDoc.value === 'rec') {
     if (!lang.value) return false
+    if (recBatchMode.value) {
+      const hasBatchFiles = recBatchFiles.value.length > 0
+      if (!hasBatchFiles && !recInitialText.value.trim()) return false
+      if (recCfg.value.requireUpload && !hasBatchFiles) return false
+      return true
+    }
     const hasFile = !!recBase64.value
     const hasText = Boolean(recInitialText.value.trim())
     if (recCfg.value.requireUpload && !hasFile) return false
@@ -407,6 +637,12 @@ const canConfirm = computed(() => {
   }
   if (curDoc.value === 'cv') {
     if (!lang.value) return false
+    if (cvBatchMode.value) {
+      const hasBatchFiles = cvBatchFiles.value.length > 0
+      if (!hasBatchFiles && !cvInitialText.value.trim()) return false
+      if (cvCfg.value.requireUpload && !hasBatchFiles) return false
+      return true
+    }
     const hasFile = !!cvBase64.value
     const hasText = Boolean(cvInitialText.value.trim())
     if (cvCfg.value.requireUpload && !hasFile) return false
@@ -420,6 +656,9 @@ const resetDialog = () => {
   step.value = 'doc'
   curDoc.value = 'cv'
   lang.value = null
+  psBatchMode.value = false
+  cvBatchMode.value = false
+  recBatchMode.value = false
   projectInfo.value = ''
   studentInfo.value = ''
   initialText.value = ''
@@ -434,6 +673,9 @@ const resetDialog = () => {
   recBase64.value = null
   recName.value = ''
   recInitialText.value = ''
+  psBatchFiles.value = []
+  cvBatchFiles.value = []
+  recBatchFiles.value = []
 }
 
 const openUploadPicker = () => {
@@ -445,6 +687,33 @@ const clearUpload = () => {
   uploadFile.value = null
   if (uploadInputRef.value) uploadInputRef.value.value = ''
 }
+
+watch(psBatchMode, (enabled) => {
+  if (enabled) {
+    uploadFile.value = null
+    if (uploadInputRef.value) uploadInputRef.value.value = ''
+  } else {
+    psBatchFiles.value = []
+  }
+})
+
+watch(cvBatchMode, (enabled) => {
+  if (enabled) {
+    cvBase64.value = null
+    cvName.value = ''
+  } else {
+    cvBatchFiles.value = []
+  }
+})
+
+watch(recBatchMode, (enabled) => {
+  if (enabled) {
+    recBase64.value = null
+    recName.value = ''
+  } else {
+    recBatchFiles.value = []
+  }
+})
 
 const isPsFileAllowed = (file: File): boolean => {
   const allowed = psAllowedTypes.value
@@ -461,6 +730,47 @@ const isPsFileAllowed = (file: File): boolean => {
   return false
 }
 
+const buildUploadPayloadFromFile = async (file: File): Promise<UploadPayload> => {
+  const name = file.name || 'attachment'
+  const lowerMime = (file.type || '').toLowerCase()
+  const lowerExt = (name.split('.').pop() || '').toLowerCase()
+  const baseInfo: UploadPayload = { name, mime: lowerMime || '', ext: lowerExt, size: file.size }
+
+  if (lowerExt === 'pdf' || lowerMime === 'application/pdf') {
+    const dataUrl = await readFileAsDataUrl(file)
+    return { ...baseInfo, mime: 'application/pdf', ext: 'pdf', base64: extractBase64(dataUrl) }
+  }
+  if (['md', 'markdown'].includes(lowerExt) || lowerMime === 'text/markdown') {
+    const text = await readFileAsText(file)
+    return { ...baseInfo, ext: 'md', text }
+  }
+  if (lowerExt === 'txt' || lowerMime === 'text/plain') {
+    const text = await readFileAsText(file)
+    return { ...baseInfo, ext: 'txt', text }
+  }
+  if (lowerExt === 'docx' || lowerMime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+    const buffer = await readFileAsArrayBuffer(file)
+    const text = await convertDocxBufferToText(buffer)
+    return { ...baseInfo, ext: 'docx', text, base64: arrayBufferToBase64(buffer) }
+  }
+  if (lowerExt === 'doc' || lowerMime === 'application/msword') {
+    const dataUrl = await readFileAsDataUrl(file)
+    return { ...baseInfo, ext: 'doc', base64: extractBase64(dataUrl) }
+  }
+  const dataUrl = await readFileAsDataUrl(file)
+  return { ...baseInfo, base64: extractBase64(dataUrl) }
+}
+
+const buildSimpleFilePayload = async (file: File): Promise<SimpleFilePayload> => {
+  const name = file.name || 'upload.bin'
+  const dataUrl = await readFileAsDataUrl(file)
+  const base64 = extractBase64(dataUrl)
+  const inferred = guessFileMime(name)
+  const fallbackMime = (file.type || '').toLowerCase()
+  const mime = inferred || fallbackMime || 'application/octet-stream'
+  return { name, base64, mime, size: file.size }
+}
+
 const onUploadSelect = async (e: Event) => {
   const input = e.target as HTMLInputElement
   const file = input?.files?.[0]
@@ -472,31 +782,7 @@ const onUploadSelect = async (e: Event) => {
       ;(toast as any).import(false)
       return
     }
-    const name = file.name || 'attachment'
-    const lowerMime = (file.type || '').toLowerCase()
-    const lowerExt = (name.split('.').pop() || '').toLowerCase()
-    const baseInfo: UploadPayload = { name, mime: lowerMime || '', ext: lowerExt, size: file.size }
-
-    if (lowerExt === 'pdf' || lowerMime === 'application/pdf') {
-      const dataUrl = await readFileAsDataUrl(file)
-      uploadFile.value = { ...baseInfo, mime: 'application/pdf', ext: 'pdf', base64: extractBase64(dataUrl) }
-    } else if (['md', 'markdown'].includes(lowerExt) || lowerMime === 'text/markdown') {
-      const text = await readFileAsText(file)
-      uploadFile.value = { ...baseInfo, ext: 'md', text }
-    } else if (lowerExt === 'txt' || lowerMime === 'text/plain') {
-      const text = await readFileAsText(file)
-      uploadFile.value = { ...baseInfo, ext: 'txt', text }
-    } else if (lowerExt === 'docx' || lowerMime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-      const buffer = await readFileAsArrayBuffer(file)
-      const text = await convertDocxBufferToText(buffer)
-      uploadFile.value = { ...baseInfo, ext: 'docx', text, base64: arrayBufferToBase64(buffer) }
-    } else if (lowerExt === 'doc' || lowerMime === 'application/msword') {
-      const dataUrl = await readFileAsDataUrl(file)
-      uploadFile.value = { ...baseInfo, ext: 'doc', base64: extractBase64(dataUrl) }
-    } else {
-      const dataUrl = await readFileAsDataUrl(file)
-      uploadFile.value = { ...baseInfo, base64: extractBase64(dataUrl) }
-    }
+    uploadFile.value = await buildUploadPayloadFromFile(file)
     ;(toast as any).import(true)
   } catch (error) {
     console.error('[PS Upload] failed to process file', error)
@@ -506,6 +792,47 @@ const onUploadSelect = async (e: Event) => {
     uploadParsing.value = false
     if (input) input.value = ''
   }
+}
+
+const onPsBatchSelect = async (e: Event) => {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input?.files || [])
+  if (!files.length) return
+  uploadParsing.value = true
+  const collected: UploadPayload[] = []
+  let rejected = 0
+  try {
+    for (const file of files) {
+      if (!isPsFileAllowed(file)) {
+        rejected += 1
+        continue
+      }
+      try {
+        const payload = await buildUploadPayloadFromFile(file)
+        collected.push(payload)
+      } catch (err) {
+        console.error('[PS Batch] failed to process file', err)
+        rejected += 1
+      }
+    }
+    if (collected.length) {
+      psBatchFiles.value = psBatchFiles.value.concat(collected)
+      ;(toast as any).import(true)
+    }
+    if (!collected.length && rejected) {
+      ;(toast as any).import(false)
+    }
+  } finally {
+    uploadParsing.value = false
+    if (input) input.value = ''
+  }
+}
+
+const removePsBatchFile = (index: number) => {
+  if (index < 0 || index >= psBatchFiles.value.length) return
+  const next = psBatchFiles.value.slice()
+  next.splice(index, 1)
+  psBatchFiles.value = next
 }
 
 const createBy = async (docType: Doc, lang: Lang) => {
@@ -541,27 +868,8 @@ const createBy = async (docType: Doc, lang: Lang) => {
   router.push(localePath(`/edit/${outlineId}`));
 }
 
-const confirmCreate = async () => {
-  if (curDoc.value !== 'ps' || !lang.value) return
-  if (psSubmitting.value) return
-
-  const manual = initialText.value.trim()
-  const hasFile = !!uploadFile.value
-  if (!hasFile && !manual) {
-    ;(toast as any).import(false)
-    return
-  }
-  if (psCfg.value.requireUpload && !hasFile) {
-    ;(toast as any).import(false)
-    return
-  }
-
-  psSubmitting.value = true
-  setAgentStep('准备创建文书...')
-
-  let outlineId: string | null = null
-  let bodyId: string | null = null
-  let chatId: string | null = null
+const runPsCreationTask = async (options: PsCreationOptions, ctx: DocCreationTaskContext): Promise<DocCreationResult> => {
+  const manual = options.manualText.trim()
 
   const decodeNewlines = (text: string) => (text || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
   const looksLikeJson = (text: string) => {
@@ -640,22 +948,27 @@ const confirmCreate = async () => {
     return walk(value).trim()
   }
 
+  let outlineId: string | null = null
+  let bodyId: string | null = null
+  let chatId: string | null = null
+
   try {
+    ctx.update('准备创建文书...')
     chatId = createChatId()
-    outlineId = await newResume(buildPsTemplateKey(lang.value, 'outline'))
-    bodyId = await newResume(buildPsTemplateKey(lang.value, 'body'))
+    outlineId = await newResume(buildPsTemplateKey(options.lang, 'outline'))
+    bodyId = await newResume(buildPsTemplateKey(options.lang, 'body'))
     if (!outlineId || !bodyId) throw new Error('ps_doc_init_failed')
 
     const psUtils = await import('~/utils/ps')
     psUtils.setPsMetaForPair({ outlineId, bodyId, chatId })
-    setDocMeta(outlineId, { docType: 'ps', lang: lang.value })
-    setDocMeta(bodyId, { docType: 'ps', lang: lang.value })
+    setDocMeta(outlineId, { docType: 'ps', lang: options.lang })
+    setDocMeta(bodyId, { docType: 'ps', lang: options.lang })
 
     try {
       const { convStore } = await import('~/data/contextStore')
       const prelim: string[] = []
-      if (projectInfo.value) prelim.push(`Project: ${projectInfo.value}`)
-      if (studentInfo.value) prelim.push(`Student: ${studentInfo.value}`)
+      if (options.projectInfo) prelim.push(`Project: ${options.projectInfo}`)
+      if (options.studentInfo) prelim.push(`Student: ${options.studentInfo}`)
       if (prelim.length) convStore.appendMessage(chatId, 'user', prelim.join('\n'))
       if (manual) convStore.appendMessage(chatId, 'user', manual)
     } catch (err) {
@@ -665,8 +978,8 @@ const confirmCreate = async () => {
     let fileId: string | null = null
     let attachmentName = ''
     let attachmentMime = ''
-    if (uploadFile.value) {
-      const info = uploadFile.value
+    if (options.uploadPayload) {
+      const info = options.uploadPayload
       attachmentName = info.name || 'attachment.bin'
       attachmentMime = guessFileMime(attachmentName) || info.mime || ''
       let base64Payload = info.base64 || ''
@@ -674,7 +987,7 @@ const confirmCreate = async () => {
         base64Payload = textToBase64(info.text)
       }
       if (base64Payload) {
-        setAgentStep('上传附件...')
+        ctx.update('上传附件...')
         fileId = await uploadSupportFile({
           backendBase: backendBase.value,
           name: attachmentName,
@@ -691,11 +1004,11 @@ const confirmCreate = async () => {
       }
     }
 
-    setAgentStep('整理上下文...')
+    ctx.update('整理上下文...')
     let extracted = ''
-    if (uploadFile.value) {
+    if (options.uploadPayload) {
       try {
-        extracted = await extractTextFromFile()
+        extracted = await extractTextFromFile(options.uploadPayload, options.lang)
       } catch (err) {
         console.error('[PS Upload] failed to extract content', err)
         extracted = ''
@@ -703,24 +1016,24 @@ const confirmCreate = async () => {
     }
 
     const promptSections: string[] = []
-    if (projectInfo.value) promptSections.push(`Project Information:\n${projectInfo.value}`)
-    if (studentInfo.value) promptSections.push(`Student Profile:\n${studentInfo.value}`)
+    if (options.projectInfo) promptSections.push(`Project Information:\n${options.projectInfo}`)
+    if (options.studentInfo) promptSections.push(`Student Profile:\n${options.studentInfo}`)
     if (manual) promptSections.push(`User Notes:\n${manual}`)
     if (extracted) promptSections.push(`Extracted Materials:\n${extracted}`)
     const promptText = promptSections.join('\n\n').trim()
 
     if (!fileId && !promptText) throw new Error('missing_input')
 
+    ctx.update('调用模型生成文书...')
     const reqBody: any = {
       doc_type: 'ps',
       max_output_tokens: 32768,
       reasoning_effort: 'medium'
     }
-    if (lang.value) reqBody.language = lang.value
+    if (options.lang) reqBody.language = options.lang
     if (fileId) reqBody.file_ids = [fileId]
     if (promptText) reqBody.prompt = promptText
 
-    setAgentStep('调用模型生成文书...')
     const createUrl = backendBase.value ? `${backendBase.value}/api/create` : '/api/create'
     const res: any = await $fetch(createUrl, {
       method: 'POST',
@@ -728,7 +1041,7 @@ const confirmCreate = async () => {
       body: reqBody
     })
 
-    setAgentStep('解析与整理结果...')
+    ctx.update('解析与整理结果...')
 
     const others = (res?.others && typeof res.others === 'object') ? res.others : {}
     const structuredCandidates: any[] = []
@@ -807,7 +1120,7 @@ const confirmCreate = async () => {
 
     if (!finalOutline && !finalBody) throw new Error('no_content')
 
-    setAgentStep('写入文档...')
+    ctx.update('写入文档...')
     const storage = (await getStorage()) || {}
     const timestamp = Date.now().toString()
 
@@ -855,14 +1168,10 @@ const confirmCreate = async () => {
     try { localStorage.setItem(`ps_seed_${chatId}`, JSON.stringify({ outline: finalOutline, body: finalBody })) } catch {}
 
     ;(toast as any).import(true)
-    uploadFile.value = null
-    if (uploadInputRef.value) uploadInputRef.value.value = ''
-    initialText.value = ''
-    projectInfo.value = ''
-    studentInfo.value = ''
+    ctx.update('已完成，可在列表中查看')
 
-    setAgentStep('跳转编辑器...')
-    router.push(localePath(`/edit/${outlineId}`))
+    const docIds = [outlineId, bodyId].filter(Boolean) as string[]
+    return { docIds, metadata: { chatId, outlineId, bodyId } }
   } catch (error) {
     console.error('[PS Create] failed', error)
     ;(toast as any).import(false)
@@ -871,14 +1180,80 @@ const confirmCreate = async () => {
       if (outlineId) await deleteResume(outlineId)
       if (bodyId) await deleteResume(bodyId)
     } catch {}
+    throw error
+  }
+}
+
+const confirmCreate = async () => {
+  if (curDoc.value !== 'ps' || !lang.value) return
+  if (psSubmitting.value || uploadParsing.value) return
+
+  const manual = initialText.value.trim()
+  if (psBatchMode.value) {
+    if (!psBatchFiles.value.length) {
+      ;(toast as any).import(false)
+      return
+    }
+    psSubmitting.value = true
+    try {
+      psBatchFiles.value.forEach((file, index) => {
+        const options: PsCreationOptions = {
+          lang: lang.value,
+          projectInfo: projectInfo.value,
+          studentInfo: studentInfo.value,
+          manualText: manual,
+          uploadPayload: { ...file },
+        }
+        const title = file.name ? `PS · ${file.name}` : `PS Batch #${index + 1}`
+        enqueueTask(defaultUserId, 'ps', title, (ctx) => runPsCreationTask(options, ctx))
+      })
+      psBatchFiles.value = []
+      uploadFile.value = null
+      projectInfo.value = ''
+      studentInfo.value = ''
+      initialText.value = ''
+    } finally {
+      psSubmitting.value = false
+    }
+    return
+  }
+
+  const payload = uploadFile.value ? { ...uploadFile.value } : null
+  const hasFile = !!payload
+  const hasManual = Boolean(manual)
+  if (!hasFile && !hasManual) {
+    ;(toast as any).import(false)
+    return
+  }
+  if (psCfg.value.requireUpload && !hasFile) {
+    ;(toast as any).import(false)
+    return
+  }
+
+  psSubmitting.value = true
+  try {
+    const options: PsCreationOptions = {
+      lang: lang.value,
+      projectInfo: projectInfo.value,
+      studentInfo: studentInfo.value,
+      manualText: manual,
+      uploadPayload: payload,
+    }
+    const title = payload?.name ? `PS · ${payload.name}` : `PS · ${new Date().toLocaleTimeString()}`
+    enqueueTask(defaultUserId, 'ps', title, (ctx) => runPsCreationTask(options, ctx))
+
+    uploadFile.value = null
+    if (uploadInputRef.value) uploadInputRef.value.value = ''
+    initialText.value = ''
+    projectInfo.value = ''
+    studentInfo.value = ''
   } finally {
     psSubmitting.value = false
-    setAgentStep('')
   }
 }
 
 const createTemplateCv = async () => {
-  if (curDoc.value !== 'cv') return
+  if (curDoc.value !== 'cv' || cvBatchMode.value) return
   const targetLang = lang.value
   if (!targetLang) return
   await createBy('cv', targetLang)
@@ -1065,14 +1440,14 @@ const extractTextFromPdfBase64 = async (b64: string): Promise<string> => {
   return normalizeText(fullText)
 }
 
-const extractViaBackend = async (payload: UploadPayload): Promise<string> => {
+const extractViaBackend = async (payload: UploadPayload, language: Lang | null): Promise<string> => {
   const url = backendBase.value ? `${backendBase.value}/api/files/extract-text` : '/api/files/extract-text'
   const res: any = await $fetch(url, {
     method: 'POST',
     body: {
       name: payload.name,
       contentBase64: payload.base64,
-      language: lang.value,
+      language,
       contentType: payload.mime
     }
   })
@@ -1080,8 +1455,8 @@ const extractViaBackend = async (payload: UploadPayload): Promise<string> => {
   throw new Error('extract_text_failed')
 }
 
-const extractTextFromFile = async (): Promise<string> => {
-  const info = uploadFile.value
+const extractTextFromFile = async (payload?: UploadPayload | null, language?: Lang | null): Promise<string> => {
+  const info = payload || uploadFile.value
   if (!info) return ''
 
   if (info.text && info.text.trim()) return normalizeText(info.text)
@@ -1091,13 +1466,13 @@ const extractTextFromFile = async (): Promise<string> => {
       return await extractTextFromPdfBase64(info.base64)
     }
     if (info.ext === 'doc') {
-      return await extractViaBackend(info)
+      return await extractViaBackend(info, language ?? lang.value)
     }
     if (info.ext === 'docx') {
       const buffer = base64ToArrayBuffer(info.base64)
       const text = await convertDocxBufferToText(buffer)
       if (text) return normalizeText(text)
-      return await extractViaBackend(info)
+      return await extractViaBackend(info, language ?? lang.value)
     }
     if (['md', 'markdown', 'txt'].includes(info.ext)) {
       return normalizeText(decodeBase64ToUtf8(info.base64))
@@ -1136,14 +1511,45 @@ const onCvSelect = async (e: Event) => {
       return
     }
   } catch {}
-  cvName.value = file.name || 'attachment.bin'
-  const reader = new FileReader()
-  reader.onload = () => {
-    const res = typeof reader.result === 'string' ? reader.result : ''
-    const comma = res.indexOf(',')
-    cvBase64.value = comma >= 0 ? res.slice(comma + 1) : res
+  const payload = await buildSimpleFilePayload(file)
+  cvName.value = payload.name
+  cvBase64.value = payload.base64
+}
+
+const onCvBatchSelect = async (e: Event) => {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input?.files || [])
+  if (!files.length) return
+  const collected: SimpleFilePayload[] = []
+  let rejected = 0
+  for (const file of files) {
+    if (!isCvFileAllowed(file)) {
+      rejected += 1
+      continue
+    }
+    try {
+      const payload = await buildSimpleFilePayload(file)
+      collected.push(payload)
+    } catch (err) {
+      console.error('[CV Batch] failed to process file', err)
+      rejected += 1
+    }
   }
-  reader.readAsDataURL(file)
+  if (collected.length) {
+    cvBatchFiles.value = cvBatchFiles.value.concat(collected)
+    ;(toast as any).import(true)
+  }
+  if (!collected.length && rejected) {
+    ;(toast as any).import(false)
+  }
+  if (input) input.value = ''
+}
+
+const removeCvBatchFile = (index: number) => {
+  if (index < 0 || index >= cvBatchFiles.value.length) return
+  const next = cvBatchFiles.value.slice()
+  next.splice(index, 1)
+  cvBatchFiles.value = next
 }
 
 const isRecFileAllowed = (file: File): boolean => {
@@ -1176,14 +1582,45 @@ const onRecSelect = async (e: Event) => {
       return
     }
   } catch {}
-  recName.value = file.name || 'attachment.bin'
-  const reader = new FileReader()
-  reader.onload = () => {
-    const res = typeof reader.result === 'string' ? reader.result : ''
-    const comma = res.indexOf(',')
-    recBase64.value = comma >= 0 ? res.slice(comma + 1) : res
+  const payload = await buildSimpleFilePayload(file)
+  recName.value = payload.name
+  recBase64.value = payload.base64
+}
+
+const onRecBatchSelect = async (e: Event) => {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input?.files || [])
+  if (!files.length) return
+  const collected: SimpleFilePayload[] = []
+  let rejected = 0
+  for (const file of files) {
+    if (!isRecFileAllowed(file)) {
+      rejected += 1
+      continue
+    }
+    try {
+      const payload = await buildSimpleFilePayload(file)
+      collected.push(payload)
+    } catch (err) {
+      console.error('[Rec Batch] failed to process file', err)
+      rejected += 1
+    }
   }
-  reader.readAsDataURL(file)
+  if (collected.length) {
+    recBatchFiles.value = recBatchFiles.value.concat(collected)
+    ;(toast as any).import(true)
+  }
+  if (!collected.length && rejected) {
+    ;(toast as any).import(false)
+  }
+  if (input) input.value = ''
+}
+
+const removeRecBatchFile = (index: number) => {
+  if (index < 0 || index >= recBatchFiles.value.length) return
+  const next = recBatchFiles.value.slice()
+  next.splice(index, 1)
+  recBatchFiles.value = next
 }
 
 // Helpers: format structured fields for chatbot display
@@ -1285,26 +1722,19 @@ const formatChecks = (checks: any): string => {
   return safeString(source)
 }
 
-const confirmCreateCv = async () => {
-  if (curDoc.value !== 'cv' || !lang.value) return
-  const promptText = cvInitialText.value.trim()
-  const hasFile = !!cvBase64.value
-  if (!hasFile && !promptText) {
-    ;(toast as any).import(false)
-    return
-  }
-  cvSubmitting.value = true
-  setAgentStep('准备生成简历...')
+const runCvCreationTask = async (options: CvCreationOptions, ctx: DocCreationTaskContext): Promise<DocCreationResult> => {
+  const promptText = options.manualText.trim()
+  ctx.update('准备生成简历...')
   try {
     let fileId: string | null = null
-    const originalName = cvName.value || 'upload.bin'
-    const originalMime = guessFileMime(originalName)
-    if (cvBase64.value) {
-      setAgentStep('上传附件...')
+    const originalName = options.uploadPayload?.name || 'upload.bin'
+    const originalMime = options.uploadPayload?.mime || guessFileMime(originalName) || 'application/octet-stream'
+    if (options.uploadPayload) {
+      ctx.update('上传附件...')
       fileId = await uploadSupportFile({
         backendBase: backendBase.value,
         name: originalName,
-        contentBase64: cvBase64.value,
+        contentBase64: options.uploadPayload.base64,
         purpose: 'user_data',
         contentType: originalMime || undefined
       })
@@ -1327,13 +1757,13 @@ const confirmCreateCv = async () => {
       doc_type: 'cv',
       max_output_tokens: 32768,
       reasoning_effort: 'medium',
-      template_key: buildTemplateKey('cv', lang.value)
+      template_key: buildTemplateKey('cv', options.lang)
     }
-    if (lang.value) reqBody.language = lang.value
+    if (options.lang) reqBody.language = options.lang
     if (fileId) reqBody.file_ids = [fileId]
     if (promptText) reqBody.prompt = promptText
 
-    setAgentStep('调用模型生成简历...')
+    ctx.update('调用模型生成简历...')
     const createUrl = backendBase.value ? `${backendBase.value}/api/cv/create` : '/api/cv/create'
     const res: any = await $fetch(createUrl, {
       method: 'POST',
@@ -1341,7 +1771,7 @@ const confirmCreateCv = async () => {
       body: reqBody
     })
 
-    setAgentStep('解析与整理结果...')
+    ctx.update('解析与整理结果...')
     const unescapeNewlines = (t: string) => (t || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
     const digResult = (source: any): { markdown: string; name?: string } => {
       let markdown = ''
@@ -1570,8 +2000,8 @@ const confirmCreateCv = async () => {
       }
     } catch {}
 
-    setAgentStep('创建文档...')
-    const cleanName = resumeName || (cvName.value ? cvName.value.replace(/\.[^.]+$/, '') : '') || 'Resume'
+    ctx.update('写入本地文档...')
+    const cleanName = resumeName || (options.uploadPayload?.name ? options.uploadPayload.name.replace(/\.[^.]+$/, '') : '') || 'Resume'
     const id = await newResumeFromImport(markdown, cleanName)
     try {
       const msgs: string[] = Array.isArray((window as any).__pendingChatMessages) ? (window as any).__pendingChatMessages : []
@@ -1582,37 +2012,97 @@ const confirmCreateCv = async () => {
       }
     } catch {}
 
-    setDocMeta(id, { docType: 'cv', lang: lang.value })
-    setAgentStep('跳转编辑器...')
-    router.push(localePath(`/edit/${id}`))
+    setDocMeta(id, { docType: 'cv', lang: options.lang })
+    ;(toast as any).import(true)
+    ctx.update('已完成，可在列表中查看')
+    return { docIds: [id], metadata: { docId: id, docType: 'cv' } }
   } catch (error) {
     console.error('[CV Create] failed', error)
     ;(toast as any).import(false)
-  } finally {
-    cvSubmitting.value = false
-    setAgentStep('')
+    throw error
   }
 }
 
-const confirmCreateRec = async () => {
-  if (curDoc.value !== 'rec' || !lang.value) return
-  if (recCfg.value.requireUpload && !recBase64.value) return
-  if (!recBase64.value && !recInitialText.value.trim()) {
+const confirmCreateCv = async () => {
+  if (curDoc.value !== 'cv' || !lang.value) return
+  if (cvSubmitting.value || uploadParsing.value) return
+
+  const manual = cvInitialText.value.trim()
+  if (cvBatchMode.value) {
+    const hasBatchFiles = cvBatchFiles.value.length > 0
+    if (!hasBatchFiles) {
+      ;(toast as any).import(false)
+      return
+    }
+    cvSubmitting.value = true
+    try {
+      cvBatchFiles.value.forEach((file, index) => {
+        const options: CvCreationOptions = {
+          lang: lang.value,
+          manualText: manual,
+          uploadPayload: { ...file },
+        }
+        const title = file.name ? `CV · ${file.name}` : `CV Batch #${index + 1}`
+        enqueueTask(defaultUserId, 'cv', title, (ctx) => runCvCreationTask(options, ctx))
+      })
+      cvBatchFiles.value = []
+      cvBase64.value = null
+      cvName.value = ''
+      cvInitialText.value = ''
+    } finally {
+      cvSubmitting.value = false
+    }
+    return
+  }
+
+  const hasFile = !!cvBase64.value
+  if (!hasFile && !manual) {
     ;(toast as any).import(false)
     return
   }
-  recSubmitting.value = true
-  setAgentStep('准备生成推荐信...')
+  if (cvCfg.value.requireUpload && !hasFile) {
+    ;(toast as any).import(false)
+    return
+  }
+
+  cvSubmitting.value = true
+  try {
+    const payload: SimpleFilePayload | null = cvBase64.value
+      ? {
+          name: cvName.value || 'upload.bin',
+          base64: cvBase64.value,
+          mime: guessFileMime(cvName.value || '') || 'application/octet-stream',
+        }
+      : null
+    const options: CvCreationOptions = {
+      lang: lang.value,
+      manualText: manual,
+      uploadPayload: payload,
+    }
+    const title = payload?.name ? `CV · ${payload.name}` : `CV · ${new Date().toLocaleTimeString()}`
+    enqueueTask(defaultUserId, 'cv', title, (ctx) => runCvCreationTask(options, ctx))
+
+    cvBase64.value = null
+    cvName.value = ''
+    cvInitialText.value = ''
+  } finally {
+    cvSubmitting.value = false
+  }
+}
+
+const runRecCreationTask = async (options: RecCreationOptions, ctx: DocCreationTaskContext): Promise<DocCreationResult> => {
+  const manual = options.manualText.trim()
+  ctx.update('准备生成推荐信...')
   try {
     let fileId: string | null = null
-    const originalName = recName.value || 'upload.bin'
-    const originalMime = guessFileMime(originalName)
-    if (recBase64.value) {
-      setAgentStep('上传附件...')
+    const originalName = options.uploadPayload?.name || 'upload.bin'
+    const originalMime = options.uploadPayload?.mime || guessFileMime(originalName) || 'application/octet-stream'
+    if (options.uploadPayload) {
+      ctx.update('上传附件...')
       fileId = await uploadSupportFile({
         backendBase: backendBase.value,
         name: originalName,
-        contentBase64: recBase64.value,
+        contentBase64: options.uploadPayload.base64,
         purpose: 'user_data',
         contentType: originalMime || undefined
       })
@@ -1624,14 +2114,13 @@ const confirmCreateRec = async () => {
       ;(window as any).__pendingChatMessages = ((window as any).__pendingChatMessages || [])
       ;(window as any).__pendingChatMessages.unshift(marker)
     } catch {}
-    const reqBody: any = { max_output_tokens: 32768, reasoning_effort: 'medium' }
-    // New unified create endpoint requires doc_type; also pass language
-    reqBody.doc_type = 'rec'
-    if (lang.value) reqBody.language = lang.value
+    const reqBody: any = { max_output_tokens: 32768, reasoning_effort: 'medium', doc_type: 'rec' }
+    if (options.lang) reqBody.language = options.lang
     if (fileId) reqBody.file_ids = [fileId]
-    if (recInitialText.value.trim()) reqBody.prompt = recInitialText.value.trim()
-    setAgentStep('调用模型生成内容...')
-    const res: any = await $fetch(`${backendBase.value}/api/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody })
+    if (manual) reqBody.prompt = manual
+    ctx.update('调用模型生成内容...')
+    const createUrl = backendBase.value ? `${backendBase.value}/api/create` : '/api/create'
+    const res: any = await $fetch(createUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody })
     // 仅提取 Structured Outputs 的 result，并将 "\n" 转义为真正的换行
     const unescapeNewlines = (t: string) => (t || '').replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
     const pickRecResultParts = (obj: any): { en: string; zh: string } => {
@@ -1672,7 +2161,7 @@ const confirmCreateRec = async () => {
       }
       return ''
     }
-    setAgentStep('解析与整理结果...')
+    ctx.update('解析与整理结果...')
     let content = ''
     let enCandidate = ''
     let zhCandidate = ''
@@ -1799,8 +2288,9 @@ const confirmCreateRec = async () => {
       }
     } catch {}
     // No additional fallback: ensure editor only saves english_letter + chinese_translation
-    setAgentStep('创建文档...')
-    const id = await newResumeFromImport(content || '', recName.value.replace(/\.[^.]+$/, '') || 'Recommendation')
+    ctx.update('写入本地文档...')
+    const cleanName = options.uploadPayload?.name ? options.uploadPayload.name.replace(/\.[^.]+$/, '') : 'Recommendation'
+    const id = await newResumeFromImport(content || '', cleanName)
     try {
       const msgs: string[] = (window as any).__pendingChatMessages || []
       if (msgs.length) {
@@ -1809,14 +2299,84 @@ const confirmCreateRec = async () => {
         ;(window as any).__pendingChatMessages = []
       }
     } catch {}
-    setDocMeta(id, { docType: 'rec', lang: lang.value })
-    setAgentStep('跳转编辑器...')
-    router.push(localePath(`/edit/${id}`))
+    setDocMeta(id, { docType: 'rec', lang: options.lang })
+    ;(toast as any).import(true)
+    ctx.update('已完成，可在列表中查看')
+    return { docIds: [id], metadata: { docId: id, docType: 'rec' } }
   } catch (e) {
     ;(toast as any).import(false)
+    throw e
+  }
+}
+
+const confirmCreateRec = async () => {
+  if (curDoc.value !== 'rec' || !lang.value) return
+  if (recSubmitting.value) return
+
+  const manual = recInitialText.value.trim()
+  if (recBatchMode.value) {
+    const hasBatchFiles = recBatchFiles.value.length > 0
+    if (!hasBatchFiles && !manual) {
+      ;(toast as any).import(false)
+      return
+    }
+    if (recCfg.value.requireUpload && !hasBatchFiles) {
+      ;(toast as any).import(false)
+      return
+    }
+    recSubmitting.value = true
+    try {
+      recBatchFiles.value.forEach((file, index) => {
+        const options: RecCreationOptions = {
+          lang: lang.value,
+          manualText: manual,
+          uploadPayload: { ...file },
+        }
+        const title = file.name ? `Rec · ${file.name}` : `Rec Batch #${index + 1}`
+        enqueueTask(defaultUserId, 'rec', title, (ctx) => runRecCreationTask(options, ctx))
+      })
+      recBatchFiles.value = []
+      recBase64.value = null
+      recName.value = ''
+      recInitialText.value = ''
+    } finally {
+      recSubmitting.value = false
+    }
+    return
+  }
+
+  const hasFile = !!recBase64.value
+  if (!hasFile && !manual) {
+    ;(toast as any).import(false)
+    return
+  }
+  if (recCfg.value.requireUpload && !hasFile) {
+    ;(toast as any).import(false)
+    return
+  }
+
+  recSubmitting.value = true
+  try {
+    const payload: SimpleFilePayload | null = recBase64.value
+      ? {
+          name: recName.value || 'upload.bin',
+          base64: recBase64.value,
+          mime: guessFileMime(recName.value || '') || 'application/octet-stream',
+        }
+      : null
+    const options: RecCreationOptions = {
+      lang: lang.value,
+      manualText: manual,
+      uploadPayload: payload,
+    }
+    const title = payload?.name ? `Rec · ${payload.name}` : `Rec · ${new Date().toLocaleTimeString()}`
+    enqueueTask(defaultUserId, 'rec', title, (ctx) => runRecCreationTask(options, ctx))
+
+    recBase64.value = null
+    recName.value = ''
+    recInitialText.value = ''
   } finally {
     recSubmitting.value = false
-    setAgentStep('')
   }
 }
 </script>

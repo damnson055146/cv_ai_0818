@@ -18,6 +18,16 @@
       </button>
     </div>
 
+    <FormatToolbar
+      :state="sidebarState"
+      :font-sizes="fontSizePresets"
+      @toggle-bold="() => toggleInlineWrap('**')"
+      @toggle-italic="() => toggleInlineWrap('*')"
+      @toggle-underline="toggleUnderline"
+      @apply-font-size="applyFontSize"
+      @clear-font-size="clearFontSize"
+    />
+
     <div class="flex h-full min-h-0">
       <MdSidebar
         v-if="!props.leftSidebarComponent"
@@ -99,6 +109,7 @@ import { normalizeProps, useMachine } from "@zag-js/vue";
 const isClient = typeof window !== "undefined";
 import { setupMonacoEditor } from "~/monaco";
 import MdSidebar from "~/components/edit/toolbar/MdSidebar.vue";
+import FormatToolbar from "~/components/edit/toolbar/FormatToolbar.vue";
 // import { useShortcuts } from "@renovamen/vue-shortcuts";
 const useShortcuts = (keys: string, cb: () => void) => {
   // 简化版实现，避免包依赖问题
@@ -124,6 +135,26 @@ const props = defineProps<{
 }>();
 
 const editorRef = ref<HTMLDivElement>();
+const fontSizePresets = ["12", "14", "16", "18", "20", "24"];
+
+type SpanFormatInfo = {
+  value: string | null;
+  inner: string;
+};
+
+const readSpanFormat = (content: string, format: string): SpanFormatInfo | null => {
+  const match = content.match(/^<span([^>]*)>([\s\S]*?)<\/span>$/);
+  if (!match) return null;
+  const attrs = match[1];
+  if (!attrs.includes(`data-mdr-format="${format}"`)) return null;
+  const valueMatch = attrs.match(/data-mdr-value="([^\"]+)"/);
+  const classMatch = attrs.match(/resume-font-size-([0-9.]+)/);
+  const value = valueMatch ? valueMatch[1] : classMatch ? classMatch[1] : null;
+  return {
+    value,
+    inner: match[2]
+  };
+};
 
 let editor:
   | {
@@ -1020,6 +1051,9 @@ const sidebarState = reactive({
   italic: false,
   bold: false,
   span: false,
+  underline: false,
+  fontSize: null as string | null,
+  hasSelection: false,
   h1: false,
   h2: false,
   h3: false,
@@ -1042,19 +1076,47 @@ const refreshSidebarState = () => {
   if (!sel) return;
 
   const hasSelection = !sel.isEmpty();
+  sidebarState.hasSelection = hasSelection;
 
   const getWrapState = (marker: string) => {
     if (!hasSelection) return false;
     const len = marker.length;
     const left = model.getValueInRange(new (window as any).monaco.Range(
-      sel.startLineNumber, Math.max(1, sel.startColumn - len), sel.startLineNumber, sel.startColumn
+      sel.startLineNumber,
+      Math.max(1, sel.startColumn - len),
+      sel.startLineNumber,
+      sel.startColumn
     ));
     const right = model.getValueInRange(new (window as any).monaco.Range(
-      sel.endLineNumber, sel.endColumn, sel.endLineNumber, sel.endColumn + len
+      sel.endLineNumber,
+      sel.endColumn,
+      sel.endLineNumber,
+      sel.endColumn + len
     ));
     if (left === marker && right === marker) return true;
     const selectedText = model.getValueInRange(sel);
     return selectedText.startsWith(marker) && selectedText.endsWith(marker);
+  };
+
+  const getTagState = (tag: string) => {
+    if (!hasSelection) return false;
+    const openTag = `<${tag}>`;
+    const closeTag = `</${tag}>`;
+    const selectedText = model.getValueInRange(sel);
+    if (selectedText.startsWith(openTag) && selectedText.endsWith(closeTag)) return true;
+    const left = model.getValueInRange(new (window as any).monaco.Range(
+      sel.startLineNumber,
+      Math.max(1, sel.startColumn - openTag.length),
+      sel.startLineNumber,
+      sel.startColumn
+    ));
+    const right = model.getValueInRange(new (window as any).monaco.Range(
+      sel.endLineNumber,
+      sel.endColumn,
+      sel.endLineNumber,
+      sel.endColumn + closeTag.length
+    ));
+    return left === openTag && right === closeTag;
   };
 
   const lineText = model.getLineContent(sel.startLineNumber);
@@ -1064,18 +1126,19 @@ const refreshSidebarState = () => {
     return lineText.slice(i).startsWith(p);
   };
 
-  sidebarState.italic = getWrapState('*');
-  sidebarState.bold = getWrapState('**');
-  // removed strike/code from basic toolbar
-  // span detection (strict selection or boundary at selection edges)
+  sidebarState.italic = getWrapState("*");
+  sidebarState.bold = getWrapState("**");
+  sidebarState.underline = getTagState("u");
+
+  let spanBoundary = false;
+  let spanTrimmed = "";
   try {
     const content = hasSelection ? model.getValueInRange(sel) : "";
-    const trimmed = content.trim();
-    let boundary = false;
+    spanTrimmed = content.trim();
     if (hasSelection) {
       const leftSlice = model.getValueInRange(new (window as any).monaco.Range(
         sel.startLineNumber,
-        Math.max(1, sel.startColumn - 20),
+        Math.max(1, sel.startColumn - 40),
         sel.startLineNumber,
         sel.startColumn
       ));
@@ -1083,12 +1146,54 @@ const refreshSidebarState = () => {
         sel.endLineNumber,
         sel.endColumn,
         sel.endLineNumber,
-        Math.min(model.getLineMaxColumn(sel.endLineNumber), sel.endColumn + 20)
+        Math.min(model.getLineMaxColumn(sel.endLineNumber), sel.endColumn + 40)
       ));
-      boundary = /<span(?:\s[^>]*?)?>$/.test(leftSlice) && /^<\/span>/.test(rightSlice);
+      spanBoundary = /<span(?:\s[^>]*?)?>$/.test(leftSlice) && /^<\/span>/.test(rightSlice);
     }
-    sidebarState.span = /^<span[^>]*>.*<\/span>$/.test(trimmed) || boundary;
-  } catch { sidebarState.span = false; }
+  } catch {
+    spanBoundary = false;
+    spanTrimmed = "";
+  }
+  sidebarState.span = /^<span[^>]*>.*<\/span>$/.test(spanTrimmed) || spanBoundary;
+
+  const detectSpanFormat = (format: string) => {
+    if (!hasSelection) return null;
+    const selected = model.getValueInRange(sel);
+    const directInfo = readSpanFormat(selected, format);
+    if (directInfo?.value) return directInfo.value;
+    const Range = (window as any).monaco.Range;
+    if (!Range) return null;
+    const leftSlice = model.getValueInRange(new Range(
+      sel.startLineNumber,
+      Math.max(1, sel.startColumn - 120),
+      sel.startLineNumber,
+      sel.startColumn
+    ));
+    const rightSlice = model.getValueInRange(new Range(
+      sel.endLineNumber,
+      sel.endColumn,
+      sel.endLineNumber,
+      Math.min(model.getLineMaxColumn(sel.endLineNumber), sel.endColumn + 120)
+    ));
+    const leftMatch = leftSlice.match(new RegExp(`<span[^>]*data-mdr-format="${format}"[^>]*>$`));
+    const rightMatch = rightSlice.match(/^<\/span>/);
+    if (leftMatch && rightMatch) {
+      const leftLen = leftMatch[0].length;
+      const rightLen = "</span>".length;
+      const range = new Range(
+        sel.startLineNumber,
+        Math.max(1, sel.startColumn - leftLen),
+        sel.endLineNumber,
+        sel.endColumn + rightLen
+      );
+      const expanded = model.getValueInRange(range);
+      const expandedInfo = readSpanFormat(expanded, format);
+      return expandedInfo?.value || null;
+    }
+    return null;
+  };
+
+  sidebarState.fontSize = detectSpanFormat("font-size");
   sidebarState.h1 = linePrefix('# ');
   sidebarState.h2 = linePrefix('## ');
   sidebarState.h3 = linePrefix('### ');
@@ -1187,6 +1292,90 @@ const toggleInlineWrap = (marker: string) => {
     ed.setSelection(sel);
   }
 };
+
+const toggleHtmlTag = (tag: string) => {
+  if (!editor) return;
+  const ed = editor.editor;
+  const model = ed.getModel();
+  if (!model) return;
+  const selection = ed.getSelection();
+  if (!selection) return;
+  const Range = (window as any).monaco.Range;
+  const Selection = (window as any).monaco.Selection;
+  if (!Range || !Selection) return;
+
+  const openTag = `<${tag}>`;
+  const closeTag = `</${tag}>`;
+  const isEmpty = selection.isEmpty();
+  const startPos = selection.getStartPosition();
+  const startOffset = model.getOffsetAt(startPos);
+
+  if (isEmpty) {
+    ed.executeEdits(`md-${tag}-insert`, [
+      { range: selection, text: `${openTag}${closeTag}`, forceMoveMarkers: true }
+    ]);
+    const newStart = model.getPositionAt(startOffset + openTag.length);
+    ed.setSelection(new Selection(newStart.lineNumber, newStart.column, newStart.lineNumber, newStart.column));
+    return;
+  }
+
+  const selectedText = model.getValueInRange(selection);
+
+  if (selectedText.startsWith(openTag) && selectedText.endsWith(closeTag)) {
+    const inner = selectedText.slice(openTag.length, selectedText.length - closeTag.length);
+    ed.executeEdits(`md-${tag}-unwrap`, [
+      { range: selection, text: inner, forceMoveMarkers: true }
+    ]);
+    const endOffset = startOffset + inner.length;
+    const newStart = model.getPositionAt(startOffset);
+    const newEnd = model.getPositionAt(endOffset);
+    ed.setSelection(new Selection(newStart.lineNumber, newStart.column, newEnd.lineNumber, newEnd.column));
+    return;
+  }
+
+  const leftRange = new Range(
+    selection.startLineNumber,
+    Math.max(1, selection.startColumn - openTag.length),
+    selection.startLineNumber,
+    selection.startColumn
+  );
+  const rightRange = new Range(
+    selection.endLineNumber,
+    selection.endColumn,
+    selection.endLineNumber,
+    selection.endColumn + closeTag.length
+  );
+  const leftText = model.getValueInRange(leftRange);
+  const rightText = model.getValueInRange(rightRange);
+
+  if (leftText === openTag && rightText === closeTag) {
+    ed.executeEdits(`md-${tag}-unwrap-boundary`, [
+      { range: rightRange, text: "", forceMoveMarkers: true },
+      { range: leftRange, text: "", forceMoveMarkers: true }
+    ]);
+    const newSel = new Selection(
+      selection.startLineNumber,
+      selection.startColumn - openTag.length,
+      selection.endLineNumber,
+      selection.endColumn - openTag.length
+    );
+    ed.setSelection(newSel);
+    return;
+  }
+
+  ed.executeEdits(`md-${tag}-wrap`, [
+    { range: selection, text: `${openTag}${selectedText}${closeTag}`, forceMoveMarkers: true }
+  ]);
+  const newSel = new Selection(
+    selection.startLineNumber,
+    selection.startColumn + openTag.length,
+    selection.endLineNumber,
+    selection.endColumn + openTag.length
+  );
+  ed.setSelection(newSel);
+};
+
+const toggleUnderline = () => toggleHtmlTag("u");
 
 const toggleLinePrefix = (prefix: string) => {
   if (!editor) return;
@@ -1332,6 +1521,7 @@ const insertCrossrefDef = (name: string) => {
 // Keyboard shortcuts
 useShortcuts("ctrl+b", () => toggleInlineWrap("**"));
 useShortcuts("ctrl+i", () => toggleInlineWrap("*"));
+useShortcuts("ctrl+u", () => toggleUnderline());
 useShortcuts("ctrl+shift+s", () => toggleSpan());
 useShortcuts("ctrl+shift+\'", () => toggleLinePrefix("> "));
 useShortcuts("ctrl+shift+l", () => toggleLinePrefix("- "));
@@ -1633,6 +1823,104 @@ const toggleSpan = () => {
   );
   ed.setSelection(newSel);
 };
+
+const applySpanFormat = (format: string, value: string | null) => {
+  if (!editor) return;
+  const ed = editor.editor;
+  const model = ed.getModel();
+  if (!model) return;
+  const selection = ed.getSelection();
+  if (!selection) return;
+  const Range = (window as any).monaco.Range;
+  const Selection = (window as any).monaco.Selection;
+  if (!Range || !Selection) return;
+
+  if (format === "font-size" && value !== null && !fontSizePresets.includes(value)) return;
+
+  const closeTag = "</span>";
+  const startPos = selection.getStartPosition();
+  const startOffset = model.getOffsetAt(startPos);
+  const selectedText = model.getValueInRange(selection);
+  const info = readSpanFormat(selectedText, format);
+
+  const buildTag = (val: string) =>
+    `<span class="resume-format resume-font-size-${val}" data-mdr-format="${format}" data-mdr-value="${val}">`;
+
+  if (info) {
+    const inner = info.inner;
+    if (value === null || info.value === value) {
+      ed.executeEdits(`md-${format}-unwrap`, [
+        { range: selection, text: inner, forceMoveMarkers: true }
+      ]);
+      const endOffset = startOffset + inner.length;
+      const newStart = model.getPositionAt(startOffset);
+      const newEnd = model.getPositionAt(endOffset);
+      ed.setSelection(new Selection(newStart.lineNumber, newStart.column, newEnd.lineNumber, newEnd.column));
+    } else if (value !== null) {
+      const tag = buildTag(value);
+      const updated = `${tag}${inner}${closeTag}`;
+      ed.executeEdits(`md-${format}-update`, [
+        { range: selection, text: updated, forceMoveMarkers: true }
+      ]);
+      const newStart = model.getPositionAt(startOffset + tag.length);
+      const newEnd = model.getPositionAt(startOffset + tag.length + inner.length);
+      ed.setSelection(new Selection(newStart.lineNumber, newStart.column, newEnd.lineNumber, newEnd.column));
+    }
+    return;
+  }
+
+  const leftSlice = model.getValueInRange(new Range(
+    selection.startLineNumber,
+    Math.max(1, selection.startColumn - 150),
+    selection.startLineNumber,
+    selection.startColumn
+  ));
+  const rightSlice = model.getValueInRange(new Range(
+    selection.endLineNumber,
+    selection.endColumn,
+    selection.endLineNumber,
+    Math.min(model.getLineMaxColumn(selection.endLineNumber), selection.endColumn + 150)
+  ));
+  const leftMatch = leftSlice.match(new RegExp(`<span[^>]*data-mdr-format="${format}"[^>]*>$`));
+  const rightMatch = rightSlice.match(/^<\/span>/);
+  if (leftMatch && rightMatch) {
+    const leftLen = leftMatch[0].length;
+    const rightLen = closeTag.length;
+    const expanded = new Selection(
+      selection.startLineNumber,
+      Math.max(1, selection.startColumn - leftLen),
+      selection.endLineNumber,
+      selection.endColumn + rightLen
+    );
+    ed.setSelection(expanded);
+    applySpanFormat(format, value);
+    return;
+  }
+
+  if (value === null) return;
+
+  const tag = buildTag(value);
+
+  if (selection.isEmpty()) {
+    ed.executeEdits(`md-${format}-insert`, [
+      { range: selection, text: `${tag}${closeTag}`, forceMoveMarkers: true }
+    ]);
+    const cursor = model.getPositionAt(startOffset + tag.length);
+    ed.setSelection(new Selection(cursor.lineNumber, cursor.column, cursor.lineNumber, cursor.column));
+    return;
+  }
+
+  ed.executeEdits(`md-${format}-wrap`, [
+    { range: selection, text: `${tag}${selectedText}${closeTag}`, forceMoveMarkers: true }
+  ]);
+  const newStart = model.getPositionAt(startOffset + tag.length);
+  const newEnd = model.getPositionAt(startOffset + tag.length + selectedText.length);
+  ed.setSelection(new Selection(newStart.lineNumber, newStart.column, newEnd.lineNumber, newEnd.column));
+};
+
+const applyFontSize = (value: string) => applySpanFormat("font-size", value);
+
+const clearFontSize = () => applySpanFormat("font-size", null);
 
 const insertTemplate = (type: 'internship-title' | 'internship-entry' | 'campus-title' | 'campus-entry' | 'research-title' | 'research-entry' | 'project-title' | 'project-entry' | 'pub-title' | 'pub-entry' | 'skills') => {
   if (!editor) return;
